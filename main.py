@@ -245,9 +245,13 @@ class Game:
 
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("DejaVuSans", max(18, self.h // 38))
-        self.big  = pygame.font.SysFont("DejaVuSans", max(28, self.h // 16), bold=True)
-        self.mid  = pygame.font.SysFont("DejaVuSans", max(22, self.h // 24), bold=True)
+        # self.font = pygame.font.SysFont("DejaVuSans", max(18, self.h // 38))
+        # self.big  = pygame.font.SysFont("DejaVuSans", max(28, self.h // 16), bold=True)
+        # self.mid  = pygame.font.SysFont("DejaVuSans", max(22, self.h // 24), bold=True)
+        font_path = "assets/font/Orbitron-VariableFont_wght.ttf"
+        self.font = pygame.font.Font(font_path, 24)
+        self.big = pygame.font.Font(font_path, 48)
+        self.mid = pygame.font.Font(font_path, 36)
 
         self.bg_img_raw = self._load_background()
         self.bg_img = None
@@ -723,7 +727,7 @@ def main():
     screen = pygame.display.set_mode((1, 1))  # tymczasowo
     game = Game(screen, mode=Mode.SPEEDUP)
     game._set_display_mode(fullscreen)
-    pygame.display.set_caption("4-Symbole + Remap")
+    pygame.display.set_caption("4-symbol v 1.0")
 
     iq = InputQueue()
     _buttons = init_gpio(iq)
