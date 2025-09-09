@@ -18,8 +18,7 @@ class ImageStore:
         if path in self.cache:
             return self.cache[path]
         try:
-            img = pygame.image.load(path)
-            # convert/convert_alpha po zainicjowaniu displaya (pygame.display.set_mode już musi być wywołane)
+            img = pygame.image.load(path)           
             img = img.convert_alpha() if allow_alpha else img.convert()
             self.cache[path] = img
             return img
@@ -38,7 +37,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 DEFAULT_CFG = {
     "pins":       {"CIRCLE": 17, "CROSS": 27, "SQUARE": 22, "TRIANGLE": 23},
-    "display":    {"fullscreen": True, "fps": 60, "windowed_size": [1280, 720]},
+    "display":    {"fullscreen": True, "fps": 60, "windowed_size": [720, 1280]},
     "speedup":    {"target_time_initial": 3, "target_time_min": 0.45, "target_time_step": -0.03},
     "timed":      {"duration": 60.0},
     "rules":      {"every_hits": 5, "banner_sec": 2.0},
@@ -165,10 +164,6 @@ SYMBOL_COLORS = {
 
 PADDING = 0.06
 GAP     = 0.04
-
-# Polskie etykiety (jeśli potrzebne jako tekst)
-POLISH = {"CIRCLE": "kółko", "SQUARE": "kwadrat", "TRIANGLE": "trójkąt", "CROSS": "krzyżyk"}
-def pl(name: str) -> str: return POLISH.get(name, name)
 
 # Config mirrors
 FPS                  = CFG["display"]["fps"]
@@ -341,7 +336,7 @@ class Game:
             flags = pygame.FULLSCREEN
             size = (0, 0)
         else:
-            size = tuple(CFG.get("display", {}).get("windowed_size", (1280,720)))
+            size = tuple(CFG.get("display", {}).get("windowed_size", (720,1280)))
             flags = 0
         self.screen = pygame.display.set_mode(size, flags)
         self.w, self.h = self.screen.get_size()
@@ -351,13 +346,13 @@ class Game:
     def settings_items(self):
         # (label, rendered_value, key); key=None means read-only
         return [
-            ("Czas początkowy", f"{self.settings['target_time_initial']:.2f}s", "target_time_initial"),
-            ("Tempo zmiany",    f"{self.settings['target_time_step']:+.2f}s/hit", "target_time_step"),
-            ("Czas minimalny",  f"{self.settings['target_time_min']:.2f}s", "target_time_min"),
-            ("Życia",           f"{int(self.settings['lives'])}", "lives"),
-            ("Głośność",        f"{self.settings['volume']:.2f}", "volume"),
-            ("Fullscreen",      "ON" if self.settings["fullscreen"] else "OFF", "fullscreen"),
-            ("Rekord",          f"{self.highscore}", None),  # read-only
+            ("Initial time",  f"{self.settings['target_time_initial']:.2f}s", "target_time_initial"),
+            ("Time step",     f"{self.settings['target_time_step']:+.2f}s/hit", "target_time_step"),
+            ("Minimum time",  f"{self.settings['target_time_min']:.2f}s", "target_time_min"),
+            ("Lives",         f"{int(self.settings['lives'])}", "lives"),
+            ("Volume",        f"{self.settings['volume']:.2f}", "volume"),
+            ("Fullscreen",    "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
+            ("High score",    f"{self.highscore}", None),  # read-only
         ]
 
     def settings_move(self, delta: int):
@@ -382,7 +377,7 @@ class Game:
     def apply_fullscreen_now(self):
         want_full = bool(self.settings.get("fullscreen", True))
         flags = pygame.FULLSCREEN if want_full else 0
-        self.screen = pygame.display.set_mode((0,0) if want_full else (1280,720), flags)
+        self.screen = pygame.display.set_mode((0,0) if want_full else (720,1280), flags)
         self._recompute_layout()
 
     def settings_adjust(self, delta: int):
@@ -602,15 +597,18 @@ class Game:
     def _draw_hud(self):
         top_y = int(self.h * 0.02)
         hud_left = int(self.w * PADDING)
-        parts = [f"Punkty: {self.score}", f"Życia: {self.lives}"]
+
+        parts = [f"Score: {self.score}", f"Lives: {self.lives}"]
         if self.scene is Scene.GAME:
             if self.mode is Mode.SPEEDUP:
-                parts.append(f"Czas na ruch: {self.target_time:.2f}s")
+                parts.append(f"Move time: {self.target_time:.2f}s")
             else:
                 rem = max(0.0, TIMED_DURATION - (self.now() - self.start_time))
-                parts.append(f"Pozostały czas: {int(rem)}s")
+                parts.append(f"Time left: {int(rem)}s")
+
         self._blit_text(self.font, "   ·   ".join(parts), (hud_left, top_y))
-        rule_str = "Brak reguły" if not self.rule else f"Reguła: {pl(self.rule[0])} -> {pl(self.rule[1])}"
+
+        rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} → {self.rule[1]}"
         self._blit_text(self.font, rule_str, (hud_left, top_y + self.font.get_height() + 6), color=ACCENT)
 
     def _draw_rule_banner(self):
@@ -618,14 +616,17 @@ class Game:
         left  = pygame.Rect(0, 0, size, size)
         right = pygame.Rect(0, 0, size, size)
         gap = self.w * 0.06
+
         left.center  = (self.w/2 - (size/2 + gap/2), self.h/2)
         right.center = (self.w/2 + (size/2 + gap/2), self.h/2)
+
         draw_symbol(self.screen, self.rule[0], left)
         draw_symbol(self.screen, self.rule[1], right)
+
         arrow = self.big.render("→", True, INK)
         self.screen.blit(arrow, (self.w/2 - arrow.get_width()/2, self.h/2 - arrow.get_height()/2))
-        
-        rule_text = self.mid.render(f"Reguła: {pl(self.rule[0])} -> {pl(self.rule[1])}", True, ACCENT)
+
+        rule_text = self.mid.render(f"Rule: {self.rule[0]} → {self.rule[1]}", True, ACCENT)
         text_rect = rule_text.get_rect(center=(self.w/2, self.h/2 - size/2 - self.mid.get_height()))
         self.screen.blit(rule_text, text_rect)
 
@@ -652,28 +653,35 @@ class Game:
             pygame.draw.rect(self.screen, color, self.screen.get_rect(), width=10, border_radius=12)
 
     def _draw_menu(self):
-        title = self.big.render("4-Symbole + Remap (Raspberry Pi)", True, INK)
+        title = self.big.render("4-Symbols", True, INK)
         self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*0.28))
-        mode_text = self.mid.render(f"Tryb: {'SPEED-UP' if self.mode is Mode.SPEEDUP else 'TIMED'} (M = zmień)", True, ACCENT)
+
+        mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
+        mode_text = self.mid.render(f"Mode: {mode_label}  (M = change)", True, ACCENT)
         self.screen.blit(mode_text, (self.w/2 - mode_text.get_width()/2, self.h*0.28 + title.get_height() + 20))
-        hint = self.font.render("ENTER = Start   ·   ESC/Q = Wyjście", True, INK)
+
+        hint = self.font.render("ENTER = start   ·   ESC/Q = quit", True, INK)
         self.screen.blit(hint, (self.w/2 - hint.get_width()/2, self.h*0.28 + title.get_height() + mode_text.get_height() + 48))
-        hint2 = self.font.render("O = Ustawienia", True, INK)
+
+        hint2 = self.font.render("O = settings", True, INK)
         self.screen.blit(hint2, (self.w/2 - hint2.get_width()/2, self.h*0.28 + title.get_height() + mode_text.get_height() + 48 + hint.get_height() + 12))
 
     def _draw_over(self):
-        over = self.big.render("KONIEC GRY", True, INK)
+        over = self.big.render("GAME OVER", True, INK)
         self.screen.blit(over, (self.w/2 - over.get_width()/2, self.h/2 - over.get_height()/2 - 60))
-        score_s = self.mid.render(f"Wynik: {self.score}", True, ACCENT)
-        hs_s    = self.mid.render(f"Najlepszy: {self.highscore}", True, ACCENT)
+
+        score_s = self.mid.render(f"Score: {self.score}", True, ACCENT)
+        hs_s    = self.mid.render(f"Best:  {self.highscore}", True, ACCENT)
         self.screen.blit(score_s, (self.w/2 - score_s.get_width()/2, self.h/2 - score_s.get_height()/2 - 10))
         self.screen.blit(hs_s,    (self.w/2 - hs_s.get_width()/2,    self.h/2 - hs_s.get_height()/2 + 26))
-        info = self.font.render("SPACJA = zagraj ponownie   ·   ESC = wyjście", True, INK)
+
+        info = self.font.render("SPACE = play again   ·   ESC = quit", True, INK)
         self.screen.blit(info, (self.w/2 - info.get_width()/2, self.h/2 + 60))
 
     def _draw_settings(self):
-        title = self.big.render("Ustawienia", True, INK)
+        title = self.big.render("Settings", True, INK)
         self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*0.18))
+
         items = self.settings_items()
         y = self.h * 0.26
         for i, (label, value, key) in enumerate(items):
@@ -681,8 +689,9 @@ class Game:
             surf = self.mid.render(f"{label}: {value}", True, ACCENT if is_sel else INK)
             self.screen.blit(surf, (self.w/2 - surf.get_width()/2, y))
             y += surf.get_height() + 14
-        help1 = self.font.render("↑/↓ wybór · ←/→ zmiana · R reset rekordu", True, INK)
-        help2 = self.font.render("ENTER zapisz · ESC wróć bez zapisu", True, INK)
+
+        help1 = self.font.render("↑/↓ select · ←/→ adjust · R reset high score", True, INK)
+        help2 = self.font.render("ENTER save · ESC back", True, INK)
         self.screen.blit(help1, (self.w/2 - help1.get_width()/2, y + 18))
         self.screen.blit(help2, (self.w/2 - help2.get_width()/2, y + 18 + help1.get_height() + 6))
 
@@ -727,7 +736,7 @@ def main():
     screen = pygame.display.set_mode((1, 1))  # tymczasowo
     game = Game(screen, mode=Mode.SPEEDUP)
     game._set_display_mode(fullscreen)
-    pygame.display.set_caption("4-symbol v 1.0")
+    pygame.display.set_caption("4-Symbols")
 
     iq = InputQueue()
     _buttons = init_gpio(iq)
