@@ -1,0 +1,33 @@
+{
+  "pins": {
+    "CIRCLE": 17,
+    "CROSS": 27,
+    "SQUARE": 22,
+    "TRIANGLE": 23
+  },
+  "display": {
+    "fullscreen": true,
+    "fps": 60
+  },
+  "speedup": {
+    "target_time_initial": 3.0,
+    "target_time_min": 0.45,
+    "target_time_step": -0.03
+  },
+  "timed": {
+    "duration": 60.0
+  },
+  "rules": {
+    "every_hits": 5,
+    "banner_sec": 2.0
+  },
+  "lives": 3,
+  "audio": {
+    "music": "assets/music.ogg",
+    "images": {
+      "background": "assets/images/bg.png"
+    },
+    "volume": 0.5
+  },
+  "highscore": 49
+}
