@@ -6,7 +6,7 @@
     "TRIANGLE": 23
   },
   "display": {
-    "fullscreen": true,
+    "fullscreen": false,
     "fps": 60
   },
   "speedup": {

@@ -176,24 +176,6 @@ RULE_BANNER_SEC      = CFG["rules"]["banner_sec"]
 MAX_LIVES            = CFG["lives"]
 ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))
 
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-#CHECK IF FLOAT NEEDED
-
 # ------------------------------- ENUMS ----------------------------------
 
 class Symbol(Enum):
@@ -223,7 +205,7 @@ def draw_symbol(surface: pygame.Surface, name: str, rect: pygame.Rect):
     if not img:
         # Fallback to drawing a basic shape if image is not found
         color = SYMBOL_COLORS.get(name, INK)
-        thickness = 22
+        thickness = 20
         cx, cy = rect.center
         w, h = rect.size
         r = min(w, h) * 0.32
@@ -279,6 +261,7 @@ class Game:
         self.flash: Optional[tuple[str, float, Tuple[int,int,int]]] = None
         self.hits_since_rule = 0
         self.rule: Optional[Tuple[str,str]] = None
+        self.target_deadline: Optional[float] = None
         self.rule_banner_until = 0.0
         self.pause_start = 0.0
         self.pause_until = 0.0
@@ -513,7 +496,28 @@ class Game:
         prev = self.target
         choices = [s for s in SYMS if s != prev] if prev else SYMS
         self.target = random.choice(choices)
-        self.target_deadline = self.now() + self.target_time
+
+        if self.mode is Mode.SPEEDUP:
+            self.target_deadline = self.now() + self.target_time
+        # else:
+        #     self.target_deadline = None  
+
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
+    # CHECK IF CAN BE WITHOUT ELSE
 
     def roll_rule(self):
         a = random.choice(SYMS)
@@ -610,25 +614,12 @@ class Game:
                 return
 
         # --- Timeout celu ---
-        if self.target and now > self.target_deadline:
-            if self.mode is Mode.TIMED:
-                self.time_left -= 1.0
-                self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
-                if self.time_left <= 0.0:
-                    self.time_left = 0.0
-                    self.end_game()
-                    return
-                else:
-                    self.new_target()
-            else:
-                # SPEEDUP: dotychczasowa logika z życiami
-                self.lives -= 1
-                self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
-                if self.lives <= 0:
-                    self.end_game()
-                    return
-                else:
-                    self.new_target()
+        if (self.mode is Mode.SPEEDUP and self.target is not None and self.target_deadline is not None and now > self.target_deadline):
+            self.lives -= 1
+            self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
+            if self.lives <= 0:
+                self.end_game(); return
+            self.new_target()
 
         # Wejścia z kolejki
         for n in iq.pop_all():
