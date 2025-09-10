@@ -39,7 +39,7 @@ DEFAULT_CFG = {
     "pins":       {"CIRCLE": 17, "CROSS": 27, "SQUARE": 22, "TRIANGLE": 23},
     "display":    {"fullscreen": True, "fps": 60, "windowed_size": [720, 1280]},
     "speedup":    {"target_time_initial": 3, "target_time_min": 0.45, "target_time_step": -0.03},
-    "timed":      {"duration": 60.0},
+    "timed":      { "duration": 60.0, "rule_bonus": 5.0 },
     "rules":      {"every_hits": 5, "banner_sec": 2.0},
     "lives":      3,
     "audio":      {"music": "assets/music.ogg", "volume": 0.5},
@@ -174,6 +174,25 @@ TIMED_DURATION       = CFG["timed"]["duration"]
 RULE_EVERY_HITS      = CFG["rules"]["every_hits"]
 RULE_BANNER_SEC      = CFG["rules"]["banner_sec"]
 MAX_LIVES            = CFG["lives"]
+ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))
+
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
+#CHECK IF FLOAT NEEDED
 
 # ------------------------------- ENUMS ----------------------------------
 
@@ -204,7 +223,7 @@ def draw_symbol(surface: pygame.Surface, name: str, rect: pygame.Rect):
     if not img:
         # Fallback to drawing a basic shape if image is not found
         color = SYMBOL_COLORS.get(name, INK)
-        thickness = 8
+        thickness = 22
         cx, cy = rect.center
         w, h = rect.size
         r = min(w, h) * 0.32
@@ -218,7 +237,7 @@ def draw_symbol(surface: pygame.Surface, name: str, rect: pygame.Rect):
             a = (cx, cy - r); b = (cx - r * 0.9, cy + r * 0.9); c = (cx + r * 0.9, cy + r * 0.9)
             pygame.draw.polygon(surface, color, [a, b, c], thickness)
         elif name == "CROSS":
-            k = r * 1.2
+            k = r * 1
             pygame.draw.line(surface, color, (cx - k, cy - k), (cx + k, cy + k), thickness)
             pygame.draw.line(surface, color, (cx - k, cy + k), (cx + k, cy - k), thickness)
     else:
@@ -240,9 +259,6 @@ class Game:
 
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
-        # self.font = pygame.font.SysFont("DejaVuSans", max(18, self.h // 38))
-        # self.big  = pygame.font.SysFont("DejaVuSans", max(28, self.h // 16), bold=True)
-        # self.mid  = pygame.font.SysFont("DejaVuSans", max(22, self.h // 24), bold=True)
         font_path = "assets/font/Orbitron-VariableFont_wght.ttf"
         self.font = pygame.font.Font(font_path, 24)
         self.big = pygame.font.Font(font_path, 48)
@@ -267,6 +283,8 @@ class Game:
         self.pause_start = 0.0
         self.pause_until = 0.0
         self.start_time = 0.0
+        self.time_left = TIMED_DURATION  
+        self._last_tick = 0.0            
         self.highscore = int(CFG.get("highscore", 0))
 
         # settings buffer (edited in the Settings scene)
@@ -278,6 +296,7 @@ class Game:
             "lives":               int(CFG["lives"]),
             "volume":              float(CFG["audio"]["volume"]),
             "fullscreen":          bool(CFG["display"]["fullscreen"]),
+            "timed_rule_bonus":    float(CFG["timed"].get("rule_bonus", 5.0)),
         }
 
         # audio
@@ -353,6 +372,7 @@ class Game:
             ("Volume",        f"{self.settings['volume']:.2f}", "volume"),
             ("Fullscreen",    "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
             ("High score",    f"{self.highscore}", None),  # read-only
+            ("Rule bonus",    f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
         ]
 
     def settings_move(self, delta: int):
@@ -373,6 +393,7 @@ class Game:
         s["target_time_step"]    = max(-1.0, min(1.0, float(s["target_time_step"])))
         s["lives"]               = max(1, min(9, int(s["lives"])))
         s["volume"]              = max(0.0, min(1.0, float(s["volume"])))
+        s["timed_rule_bonus"] = max(0.0, min(30.0, float(s["timed_rule_bonus"])))
 
     def apply_fullscreen_now(self):
         want_full = bool(self.settings.get("fullscreen", True))
@@ -394,6 +415,7 @@ class Game:
             "target_time_min":     0.05,
             "lives":               1,
             "volume":              0.05,
+            "timed_rule_bonus":    0.5,
         }.get(key, 0.0)
         if step == 0.0: return
         cur = self.settings[key]
@@ -440,6 +462,7 @@ class Game:
             "lives":   CFG["lives"],
             "audio":   {"volume": CFG["audio"]["volume"]},
             "display": {"fullscreen": CFG["display"]["fullscreen"]},
+            "timed":   {"rule_bonus": CFG["timed"]["rule_bonus"]},
         })
         if self.music_ok:
             pygame.mixer.music.set_volume(float(CFG["audio"]["volume"]))
@@ -452,24 +475,27 @@ class Game:
 
     # ----- game flow -----
     def reset_game_state(self):
-        """Resets gameplay variables without re-initializing the whole class."""
         self.score = 0
         self.lives = int(self.settings.get("lives", MAX_LIVES))
-        self.target: Optional[str] = None
+        self.target = None
         self.target_deadline = 0.0
         self.target_time = float(self.settings.get("target_time_initial", TARGET_TIME_INITIAL))
-        self.flash: Optional[tuple[str, float, Tuple[int,int,int]]] = None
+        self.flash = None
         self.hits_since_rule = 0
-        self.rule: Optional[Tuple[str, str]] = None
+        self.rule = None
         self.rule_banner_until = 0.0
         self.pause_start = 0.0
         self.pause_until = 0.0
-        self.start_time = 0.0
+        # TIMED
+        self.time_left = TIMED_DURATION
+        self._last_tick = self.now()
 
     def start_game(self):
         self.scene = Scene.GAME
         self.reset_game_state()
         self._ensure_music()
+        if self.mode is Mode.TIMED:
+            self._last_tick = self.now()  # start licznika dt
         if self.music_ok:
             pygame.mixer.music.play(-1)
         self.new_target()
@@ -500,6 +526,10 @@ class Game:
         self.pause_start = now
         self.pause_until = self.rule_banner_until
 
+        # TIMED: bonus z configu
+        if self.mode is Mode.TIMED:
+            self.time_left += ADDITIONAL_RULE_TIME
+
     def apply_rule(self, stimulus: str) -> str:
         return self.rule[1] if (self.rule and stimulus == self.rule[0]) else stimulus
 
@@ -512,15 +542,33 @@ class Game:
             self.score += 1
             self.hits_since_rule += 1
             self.flash = (name, self.now() + 0.18, PAD_GOOD)
+
+            # TIMED: +1s
+            if self.mode is Mode.TIMED:
+                self.time_left += 1.0
+
             if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
+
             if self.hits_since_rule >= RULE_EVERY_HITS:
                 self.hits_since_rule = 0
                 self.roll_rule()
+
             self.new_target()
         else:
+            # TIMED: tylko -1s i nowy cel (bez wpływu na życie)
+            if self.mode is Mode.TIMED:
+                self.time_left -= 1.0
+                self.flash = (name, self.now() + 0.18, PAD_BAD)
+                self.new_target()
+                if self.time_left <= 0.0:
+                    self.time_left = 0.0
+                    self.end_game()
+                return
+
+            # SPEEDUP: stara logika z życiami
             self.lives -= 1
             self.flash = (name, self.now() + 0.18, PAD_BAD)
             if self.lives <= 0:
@@ -532,32 +580,57 @@ class Game:
         now = self.now()
         if self.scene is not Scene.GAME:
             return
-        # rule banner pause
+
+        # Pauza na banner reguły – nie konsumujemy czasu, nie czytamy wejść
         if now < self.rule_banner_until and self.rule is not None:
             _ = iq.pop_all()
+            # Przy wyjściu z pauzy chcemy, żeby dt nie było wielkie:
+            self._last_tick = now
             return
-        # resume from pause -> adjust clocks
+
+        # Koniec pauzy – korekta liczników powiązanych z „deadline” celu
         if self.pause_until and now >= self.pause_until:
             paused = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
             self.pause_start = 0.0
             self.pause_until = 0.0
             if self.target:
                 self.target_deadline += paused
-            if self.mode is Mode.TIMED:
-                self.start_time += paused
-        # timeout on target
-        if self.target and now > self.target_deadline:
-            self.lives -= 1
-            self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
-            if self.lives <= 0:
-                self.end_game()
-            else:
-                self.new_target()
-        # timed mode end
+            # TIMED: dt liczony oddzielnie, więc tylko zsynchronizuj last_tick
+            self._last_tick = now
+
+        # --- TIMED: odliczanie czasu ---
         if self.mode is Mode.TIMED:
-            if now - self.start_time >= TIMED_DURATION:
+            dt = max(0.0, now - (self._last_tick or now))
+            self.time_left -= dt
+            self._last_tick = now
+            # clamp i koniec gry
+            if self.time_left <= 0.0:
+                self.time_left = 0.0
                 self.end_game()
-        # queued inputs
+                return
+
+        # --- Timeout celu ---
+        if self.target and now > self.target_deadline:
+            if self.mode is Mode.TIMED:
+                self.time_left -= 1.0
+                self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
+                if self.time_left <= 0.0:
+                    self.time_left = 0.0
+                    self.end_game()
+                    return
+                else:
+                    self.new_target()
+            else:
+                # SPEEDUP: dotychczasowa logika z życiami
+                self.lives -= 1
+                self.flash = (self.apply_rule(self.target), now + 0.18, PAD_BAD)
+                if self.lives <= 0:
+                    self.end_game()
+                    return
+                else:
+                    self.new_target()
+
+        # Wejścia z kolejki
         for n in iq.pop_all():
             self.handle_input_symbol(n)
 
@@ -598,16 +671,29 @@ class Game:
         top_y = int(self.h * 0.02)
         hud_left = int(self.w * PADDING)
 
-        parts = [f"Score: {self.score}", f"Lives: {self.lives}"]
-        if self.scene is Scene.GAME:
-            if self.mode is Mode.SPEEDUP:
-                parts.append(f"Move time: {self.target_time:.2f}s")
-            else:
-                rem = max(0.0, TIMED_DURATION - (self.now() - self.start_time))
-                parts.append(f"Time left: {int(rem)}s")
+        if self.scene is Scene.GAME and self.mode is Mode.TIMED:
+            # Tylko score (bez lives)
+            parts = [f"Score: {self.score}"]
+        else:
+            # SPEEDUP: Score + Lives
+            parts = [f"Score: {self.score}", f"Lives: {self.lives}"]
 
         self._blit_text(self.font, "   ·   ".join(parts), (hud_left, top_y))
 
+        # Pasek czasu w TIMED
+        if self.scene is Scene.GAME and self.mode is Mode.TIMED:
+            bar_w = int(self.w * 0.6)
+            bar_h = 18
+            bar_x = (self.w - bar_w) // 2
+            bar_y = top_y + self.font.get_height() + 10
+
+            pygame.draw.rect(self.screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=8)
+            ratio = max(0.0, min(1.0, self.time_left / TIMED_DURATION))
+            fill_w = int(bar_w * ratio)
+            pygame.draw.rect(self.screen, (90, 200, 255), (bar_x, bar_y, fill_w, bar_h), border_radius=8)
+            pygame.draw.rect(self.screen, (160, 180, 200), (bar_x, bar_y, bar_w, bar_h), width=2, border_radius=8)
+
+        # Informacja o regule
         rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} → {self.rule[1]}"
         self._blit_text(self.font, rule_str, (hud_left, top_y + self.font.get_height() + 6), color=ACCENT)
 
@@ -740,7 +826,7 @@ def main():
 
     iq = InputQueue()
     _buttons = init_gpio(iq)
-    game = Game(screen, mode=Mode.SPEEDUP)
+    # game = Game(screen, mode=Mode.SPEEDUP)
 
     keymap: Dict[int, str] = {
         pygame.K_UP: "TRIANGLE", pygame.K_RIGHT: "CIRCLE", pygame.K_LEFT: "SQUARE", pygame.K_DOWN: "CROSS",

@@ -15,7 +15,8 @@
     "target_time_step": -0.03
   },
   "timed": {
-    "duration": 60.0
+    "duration": 60.0,
+    "rule_bonus": 5.0
   },
   "rules": {
     "every_hits": 5,
