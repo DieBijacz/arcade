@@ -374,6 +374,11 @@ class Game:
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
 
+        # key delay
+        self.keys_down = set()         
+        self.lock_until_all_released = False  
+        self.accept_after = 0.0        
+
         self.font       = pygame.font.Font(FONT_PATH, FONT_SIZE_SMALL)
         self.big        = pygame.font.Font(FONT_PATH, FONT_SIZE_BIG)
         self.mid        = pygame.font.Font(FONT_PATH, FONT_SIZE_MID)
@@ -810,6 +815,8 @@ class Game:
                 self.hits_since_rule = 0
                 self.roll_rule()
             self.new_target()
+            self.lock_until_all_released = True
+            self.accept_after = self.now() + 0.12
         else:
             self.trigger_shake()
             self.trigger_glitch()
@@ -825,6 +832,9 @@ class Game:
 
     def update(self, iq: InputQueue):
         now = self.now()
+        # input lock
+        if self.lock_until_all_released and not self.keys_down and now >= self.accept_after: self.lock_until_all_released = False     
+
         if self.scene is not Scene.GAME:
             return
         if now < self.rule_banner_until and self.rule is not None:
@@ -895,15 +905,30 @@ class Game:
                     self.settings_adjust(+1)
                 elif event.key == pygame.K_r:
                     self.settings_reset_highscore()
+            
+            self.keys_down.add(event.key)                     
 
             # mapowanie klawiszy na symbole (działa w każdej scenie)
             name = keymap.get(event.key)
             if name:
+                # jeśli trwa blokada po nowym celu albo cooldown – ignoruj
+                if self.lock_until_all_released or self.now() < getattr(self, 'accept_after', 0.0):
+                    return
                 iq.push(name)
+        elif event.type == pygame.KEYUP:
+            # zdejmij z „trzymanych”
+            self.keys_down.discard(event.key)
+            # jeśli nic już nie trzymamy i skończył się cooldown – odblokuj
+            if self.lock_until_all_released and not self.keys_down and self.now() >= getattr(self, 'accept_after', 0.0):
+                self.lock_until_all_released = False
 
     # ----- rendering -----
-    def _blit_text(self, font, text, pos, color=INK):
-        self.screen.blit(font.render(text, True, color), pos)
+    def draw_text(self, font, text, pos, color=INK, shadow=True):
+        if shadow:
+            shadow_surf = font.render(text, True, (0, 0, 0))
+            self.screen.blit(shadow_surf, (pos[0] + 2, pos[1] + 2))
+        txt_surf = font.render(text, True, color)
+        self.screen.blit(txt_surf, pos)
 
     def _draw_timer_bar(self, ratio: float, top_y: int, label: Optional[str] = None):
         ratio = max(0.0, min(1.0, ratio))
@@ -920,28 +945,59 @@ class Game:
         pygame.draw.rect(self.screen, TIMER_BAR_BORDER,(bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
         if label:
             timer_font = getattr(self, "timer_font", self.mid)
-            text_surf = timer_font.render(label, True, TIMER_BAR_TEXT_COLOR)
-            tx = bar_x + (bar_w - text_surf.get_width()) // 2
-            ty = bar_y + (bar_h - text_surf.get_height()) // 2
-            shadow = timer_font.render(label, True, (0, 0, 0))
-            self.screen.blit(shadow, (tx + 2, ty + 2))
-            self.screen.blit(text_surf, (tx, ty))
+            tx = bar_x + bar_w // 2
+            ty = bar_y + bar_h // 2
+            # użyj helpera draw_text
+            self.draw_text(timer_font, label, (tx - timer_font.size(label)[0] // 2, ty - timer_font.size(label)[1] // 2), color=TIMER_BAR_TEXT_COLOR)
+
+    def draw_chip(self, text: str, x: int, y: int,
+                pad: int = 10, radius: int = 10,
+                bg=(20, 22, 30, 160), border=(120, 200, 255, 220),
+                text_color=INK):
+        t_surf = self.font.render(text, True, text_color)
+        w, h = t_surf.get_width() + pad*2, t_surf.get_height() + pad*2
+
+        chip = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(chip, bg, chip.get_rect(), border_radius=radius)
+        pygame.draw.rect(chip, border, chip.get_rect(), width=1, border_radius=radius)
+        
+        shadow = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 120), shadow.get_rect(), border_radius=radius+2)
+        self.screen.blit(shadow, (x+3, y+4))
+
+        chip.blit(t_surf, (pad, pad))
+        self.screen.blit(chip, (x, y))
+        return pygame.Rect(x, y, w, h)
 
     def _draw_hud(self):
         top_y = int(self.h * HUD_TOP_MARGIN_FACTOR)
         hud_left = int(self.w * PADDING)
-        parts = [f"Score: {self.score}"] if (self.scene is Scene.GAME and self.mode is Mode.TIMED) \
-                else [f"Score: {self.score}", f"Lives: {self.lives}"]
-        self._blit_text(self.font, HUD_SEPARATOR.join(parts), (hud_left, top_y))
+        gap = 8
+        x = hud_left
+        y = top_y
+        hud_bottom = y 
+
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
+                r_score = self.draw_chip(f"Score: {self.score}", x, y)
+                hud_bottom = max(hud_bottom, r_score.bottom)
                 self._draw_timer_bar(self.time_left / TIMED_DURATION, top_y, f"{self.time_left:.1f}s")
-            else:
+
+            elif self.mode is Mode.SPEEDUP:
+                r_score = self.draw_chip(f"Score: {self.score}", x, y)
+                x2 = r_score.right + gap
+                r_lives = self.draw_chip(f"Lives: {self.lives}", x2, y)
+                hud_bottom = max(hud_bottom, r_score.bottom, r_lives.bottom)
                 if self.target_deadline is not None and self.target_time > 0:
                     remaining = max(0.0, self.target_deadline - self.now())
-                    self._draw_timer_bar(remaining / max(0.001, self.target_time), top_y, f"{remaining:.1f}s")
-        rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} → {self.rule[1]}"
-        self._blit_text(self.font, rule_str, (hud_left, top_y + self.font.get_height() + 6), color=ACCENT)
+                    ratio = remaining / max(0.001, self.target_time)
+                    self._draw_timer_bar(ratio, top_y, f"{remaining:.1f}s")
+        else:
+            r_score = self.draw_chip(f"Score: {self.score}", x, y)
+            hud_bottom = max(hud_bottom, r_score.bottom)
+
+        rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} \u2192 {self.rule[1]}"
+        self.draw_text(self.font, rule_str, (hud_left, hud_bottom + 6), color=ACCENT)
 
     def _ease_out_cubic(self, t: float) -> float:
         t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
@@ -1031,59 +1087,98 @@ class Game:
     
     def draw(self):
         # rysujemy NA BUFOR zamiast bezpośrednio na ekran
-        self.fb.fill((0,0,0,0))
+        self.fb.fill((0, 0, 0, 0))
         old_screen = self.screen
         self.screen = self.fb  # przekieruj wszystkie metody rysujące
         try:
             if self.scene is Scene.GAME and self.now() < self.rule_banner_until and self.rule:
-                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-                else:           self.screen.fill(BG)
+                if self.bg_img:
+                    self.screen.blit(self.bg_img, (0, 0))
+                else:
+                    self.screen.fill(BG)
                 self._draw_rule_banner()
+
             elif self.scene is Scene.GAME:
                 self._draw_gameplay()
+
             elif self.scene is Scene.MENU:
-                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-                else:           self.screen.fill(BG)
+                if self.bg_img:
+                    self.screen.blit(self.bg_img, (0, 0))
+                else:
+                    self.screen.fill(BG)
                 # menu
-                title = self.big.render("4-Symbols", True, INK)
-                self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*MENU_TITLE_Y_FACTOR))
+                title_text = "4-Symbols"
+                tw, th = self.big.size(title_text)
+                tx = self.w / 2 - tw / 2
+                ty = self.h * MENU_TITLE_Y_FACTOR
+                self.draw_text(self.big, title_text, (tx, ty))
+
                 mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
-                mode_text = self.mid.render(f"Mode: {mode_label}  (M = change)", True, ACCENT)
-                self.screen.blit(mode_text, (self.w/2 - mode_text.get_width()/2,
-                                             self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_MODE_GAP))
-                hint = self.font.render("ENTER = start   ·   ESC/Q = quit", True, INK)
-                self.screen.blit(hint, (self.w/2 - hint.get_width()/2,
-                                        self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height()))
-                hint2 = self.font.render("O = settings", True, INK)
-                self.screen.blit(hint2, (self.w/2 - hint2.get_width()/2,
-                                         self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height() + hint.get_height() + MENU_HINT2_EXTRA_GAP))
+                mode_text = f"Mode: {mode_label}  (M = change)"
+                mw, mh = self.mid.size(mode_text)
+                self.draw_text(self.mid, mode_text, (self.w / 2 - mw / 2, ty + th + MENU_MODE_GAP), color=ACCENT)
+
+                hint_text = "ENTER = start   ·   ESC/Q = quit"
+                hw, hh = self.font.size(hint_text)
+                self.draw_text(self.font, hint_text,
+                            (self.w / 2 - hw / 2, ty + th + MENU_HINT_GAP + mh))
+
+                hint2_text = "O = settings"
+                h2w, h2h = self.font.size(hint2_text)
+                self.draw_text(self.font, hint2_text,
+                            (self.w / 2 - h2w / 2,
+                                ty + th + MENU_HINT_GAP + mh + hh + MENU_HINT2_EXTRA_GAP))
+
             elif self.scene is Scene.OVER:
-                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-                else:           self.screen.fill(BG)
-                over = self.big.render("GAME OVER", True, INK)
-                self.screen.blit(over, (self.w/2 - over.get_width()/2, self.h/2 - over.get_height()/2 + OVER_TITLE_OFFSET_Y))
-                score_s = self.mid.render(f"Score: {self.score}", True, ACCENT)
-                hs_s    = self.mid.render(f"Best:  {self.highscore}", True, ACCENT)
-                self.screen.blit(score_s, (self.w/2 - score_s.get_width()/2, self.h/2 - score_s.get_height()/2 + OVER_SCORE_GAP1))
-                self.screen.blit(hs_s,    (self.w/2 - hs_s.get_width()/2,    self.h/2 - hs_s.get_height()/2 + OVER_SCORE_GAP2))
-                info = self.font.render("SPACE = play again   ·   ESC = quit", True, INK)
-                self.screen.blit(info, (self.w/2 - info.get_width()/2, self.h/2 + OVER_INFO_GAP))
+                if self.bg_img:
+                    self.screen.blit(self.bg_img, (0, 0))
+                else:
+                    self.screen.fill(BG)
+
+                over_text = "GAME OVER"
+                ow, oh = self.big.size(over_text)
+                self.draw_text(self.big, over_text,
+                            (self.w / 2 - ow / 2, self.h / 2 - oh / 2 + OVER_TITLE_OFFSET_Y))
+
+                score_text = f"Score: {self.score}"
+                best_text = f"Best:  {self.highscore}"
+                sw, sh = self.mid.size(score_text)
+                bw, bh = self.mid.size(best_text)
+                self.draw_text(self.mid, score_text,
+                            (self.w / 2 - sw / 2, self.h / 2 - sh / 2 + OVER_SCORE_GAP1), color=ACCENT)
+                self.draw_text(self.mid, best_text,
+                            (self.w / 2 - bw / 2, self.h / 2 - bh / 2 + OVER_SCORE_GAP2), color=ACCENT)
+
+                info_text = "SPACE = play again   ·   ESC = quit"
+                iw, ih = self.font.size(info_text)
+                self.draw_text(self.font, info_text, (self.w / 2 - iw / 2, self.h / 2 + OVER_INFO_GAP))
+
             elif self.scene is Scene.SETTINGS:
-                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-                else:           self.screen.fill(BG)
-                title = self.big.render("Settings", True, INK)
-                self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*SETTINGS_TITLE_Y_FACTOR))
-                items = self.settings_items()
+                if self.bg_img:
+                    self.screen.blit(self.bg_img, (0, 0))
+                else:
+                    self.screen.fill(BG)
+
+                title_text = "Settings"
+                tw, th = self.big.size(title_text)
+                self.draw_text(self.big, title_text,
+                            (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
+
                 y = self.h * SETTINGS_LIST_Y_START_FACTOR
-                for i, (label, value, key) in enumerate(items):
-                    is_sel = (i == self.settings_idx and key is not None)
-                    surf = self.mid.render(f"{label}: {value}", True, ACCENT if is_sel else INK)
-                    self.screen.blit(surf, (self.w/2 - surf.get_width()/2, y))
-                    y += surf.get_height() + SETTINGS_ITEM_SPACING
-                help1 = self.font.render("↑/↓ select · ←/→ adjust · R reset high score", True, INK)
-                help2 = self.font.render("ENTER save · ESC back", True, INK)
-                self.screen.blit(help1, (self.w/2 - help1.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP))
-                self.screen.blit(help2, (self.w/2 - help2.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP + help1.get_height() + SETTINGS_HELP_GAP))
+                for i, (label, value, key) in enumerate(self.settings_items()):
+                    item_text = f"{label}: {value}"
+                    color = ACCENT if (i == self.settings_idx and key is not None) else INK
+                    iw, ih = self.mid.size(item_text)
+                    self.draw_text(self.mid, item_text, (self.w / 2 - iw / 2, y), color=color)
+                    y += ih + SETTINGS_ITEM_SPACING
+
+                help1 = "↑/↓ select · ←/→ adjust · R reset high score"
+                help2 = "ENTER save · ESC back"
+                w1, h1 = self.font.size(help1)
+                w2, h2 = self.font.size(help2)
+                self.draw_text(self.font, help1, (self.w / 2 - w1 / 2, y + SETTINGS_HELP_MARGIN_TOP))
+                self.draw_text(self.font, help2,
+                            (self.w / 2 - w2 / 2, y + SETTINGS_HELP_MARGIN_TOP + h1 + SETTINGS_HELP_GAP))
         finally:
             # przywróć
             self.screen = old_screen
@@ -1098,6 +1193,7 @@ def main():
     os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"  # start w lewym górnym rogu
 
     pygame.init()
+    pygame.key.set_repeat()
     fullscreen = bool(CFG.get("display", {}).get("fullscreen", True))
     screen = pygame.display.set_mode((1, 1))
     game = Game(screen, mode=Mode.SPEEDUP)
