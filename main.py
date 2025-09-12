@@ -410,6 +410,7 @@ class Game:
         # glitch state
         self.glitch_active_until = 0.0
         self.glitch_start_time = 0.0
+        self.glitch_mag = 1.0
 
         # settings buffer (ekran Settings)
         self.settings_idx = 0
@@ -466,6 +467,69 @@ class Game:
         now = self.now()
         self.shake_start = now
         self.shake_until = now + SHAKE_DURATION
+    
+    def trigger_glitch(self, mag: float = 1.0, duration: float = GLITCH_DURATION):
+        now = self.now()
+        self.glitch_mag = max(0.0, mag)
+        self.glitch_active_until = now + max(0.01, duration)
+        self.glitch_start_time = now
+        self.trigger_shake()
+    
+    def _apply_glitch_effect(self, frame: pygame.Surface) -> pygame.Surface:
+        now = self.now()
+        if now >= self.glitch_active_until:
+            return frame
+
+        dur = max(1e-6, GLITCH_DURATION)
+        t = 1.0 - (self.glitch_active_until - now) / dur          
+        vigor = (1 - abs(0.5 - t) * 2)                                 
+        strength = max(0.0, min(1.0, vigor * self.glitch_mag))
+
+        # 1) pixelation
+        pf = GLITCH_PIXEL_FACTOR_MAX * strength
+        if pf > 0:
+            sw, sh = max(1, int(self.w * (1 - pf))), max(1, int(self.h * (1 - pf)))
+            small = pygame.transform.smoothscale(frame, (sw, sh))
+            frame = pygame.transform.scale(small, (self.w, self.h))
+
+        out = frame.copy()
+
+        # 2) RGB split
+        ch_off = int(6 * strength) + random.randint(0, 2)
+        if ch_off:
+            for (mask, dx, dy) in (
+                ((255, 0, 0, 255),  ch_off, 0),
+                ((0, 255, 0, 255), -ch_off, 0),
+                ((0, 0, 255, 255),  0, ch_off),
+            ):
+                chan = frame.copy()
+                tint = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+                tint.fill(mask)
+                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
+
+        # 3) displaced horizontal bands
+        if random.random() < 0.9:
+            bands = random.randint(2, 4)
+            band_h = max(4, self.h // (bands * 8))
+            for _ in range(bands):
+                y = random.randint(0, self.h - band_h)
+                dx = random.randint(-int(self.w * 0.03 * strength), int(self.w * 0.03 * strength))
+                slice_rect = pygame.Rect(0, y, self.w, band_h)
+                slice_surf = out.subsurface(slice_rect).copy()
+                out.blit(slice_surf, (dx, y))
+
+        # 4) colored blocks
+        if random.random() < 0.4 * strength:
+            w = random.randint(self.w // 12, self.w // 4)
+            h = random.randint(self.h // 24, self.h // 8)
+            x = random.randint(0, max(0, self.w - w))
+            y = random.randint(0, max(0, self.h - h))
+            col = (random.randint(180, 255), random.randint(120, 255),
+                   random.randint(120, 255), random.randint(40, 100))
+            pygame.draw.rect(out, col, (x, y, w, h))
+
+        return out
 
     def _load_background(self):
         path = CFG.get("images", {}).get("background") if isinstance(CFG.get("images"), dict) else None
@@ -551,6 +615,12 @@ class Game:
                 return
         self.settings_idx = 0
 
+    def toggle_settings(self):
+        if self.scene is Scene.SETTINGS:
+            self.settings_cancel()   
+        elif self.scene is Scene.MENU: 
+            self.open_settings()   
+
     def _settings_clamp(self):
         s = self.settings
         s["target_time_initial"] = max(0.2, min(10.0, float(s["target_time_initial"])))
@@ -615,6 +685,7 @@ class Game:
         })
         self.settings_idx = 0
         self.settings_move(0)
+        self.trigger_glitch(mag=1.0)
         self.scene = Scene.SETTINGS
 
     def settings_save(self):
@@ -655,9 +726,11 @@ class Game:
         if self.music_ok:
             pygame.mixer.music.set_volume(float(CFG["audio"]["volume"]))
         self._set_display_mode(bool(CFG["display"]["fullscreen"]))
+        self.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
     def settings_cancel(self):
+        self.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
     # ----- gameplay flow -----
@@ -791,13 +864,17 @@ class Game:
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 pygame.quit(); sys.exit(0)
 
+            # --- globalny toggle 'O' dla MENU/SETTINGS ---
+            if event.key == pygame.K_o:
+                if self.scene in (Scene.MENU, Scene.SETTINGS):
+                    self.toggle_settings()
+                    return  # już obsłużone
+
             if self.scene is Scene.MENU:
                 if event.key == pygame.K_RETURN:
                     self.start_game()
                 elif event.key == pygame.K_m:
                     self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP)
-                elif event.key == pygame.K_o:
-                    self.open_settings()
 
             elif self.scene is Scene.OVER:
                 if event.key == pygame.K_SPACE:
@@ -951,69 +1028,7 @@ class Game:
             base_rect = pygame.Rect(0, 0, self.w * SYMBOL_BASE_SIZE_FACTOR, self.w * SYMBOL_BASE_SIZE_FACTOR)
             base_rect.center = (self.w * 0.5, self.h * 0.5)
             self._draw_spawn_animation(self.screen, self.target, base_rect)
-
-    # --- glitch compositing on framebuffer ---
-    def _apply_glitch_effect(self, frame: pygame.Surface) -> pygame.Surface:
-        now = self.now()
-        if now >= self.glitch_active_until:
-            return frame
-
-        dur = max(1e-6, GLITCH_DURATION)
-        t = 1.0 - (self.glitch_active_until - now) / dur                # 0..1
-        vigor = (1 - abs(0.5 - t) * 2)                                  # najmocniej w środku
-
-        # 1) pixelation
-        pf = GLITCH_PIXEL_FACTOR_MAX * vigor
-        if pf > 0:
-            sw, sh = max(1, int(self.w * (1 - pf))), max(1, int(self.h * (1 - pf)))
-            small = pygame.transform.smoothscale(frame, (sw, sh))
-            frame = pygame.transform.scale(small, (self.w, self.h))
-
-        out = frame.copy()
-
-        # 2) RGB split
-        ch_off = int(6 * vigor) + random.randint(0, 2)
-        if ch_off:
-            for (mask, dx, dy) in (
-                ((255, 0, 0, 255),  ch_off, 0),
-                ((0, 255, 0, 255), -ch_off, 0),
-                ((0, 0, 255, 255),  0, ch_off),
-            ):
-                chan = frame.copy()
-                tint = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-                tint.fill(mask)
-                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
-
-        # 3) displaced horizontal bands
-        if random.random() < 0.9:
-            bands = random.randint(2, 4)
-            band_h = max(4, self.h // (bands * 8))
-            for _ in range(bands):
-                y = random.randint(0, self.h - band_h)
-                dx = random.randint(-int(self.w*0.03), int(self.w*0.03))
-                slice_rect = pygame.Rect(0, y, self.w, band_h)
-                slice_surf = out.subsurface(slice_rect).copy()
-                out.blit(slice_surf, (dx, y))
-
-        # 4) colored blocks
-        if random.random() < 0.4:
-            w = random.randint(self.w // 12, self.w // 4)
-            h = random.randint(self.h // 24, self.h // 8)
-            x = random.randint(0, max(0, self.w - w))
-            y = random.randint(0, max(0, self.h - h))
-            col = (random.randint(180, 255), random.randint(120, 255),
-                   random.randint(120, 255), random.randint(40, 100))
-            pygame.draw.rect(out, col, (x, y, w, h))
-
-        return out
-
-    def trigger_glitch(self):
-        now = self.now()
-        self.glitch_active_until = now + GLITCH_DURATION
-        self.glitch_start_time = now
-        self.trigger_shake()
-
+    
     def draw(self):
         # rysujemy NA BUFOR zamiast bezpośrednio na ekran
         self.fb.fill((0,0,0,0))
