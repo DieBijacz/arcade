@@ -46,6 +46,7 @@ DEFAULT_CFG = {
         "symbol_cross": "assets/images/cross.png",
         "symbol_square": "assets/images/square.png",
         "symbol_triangle": "assets/images/triangle.png",
+        "arrow": "assets/images/arrow.png",
     },
     "highscore": 0,
 }
@@ -206,7 +207,7 @@ SYMBOL_CROSS_K_FACTOR         = 1.0
 HUD_TOP_MARGIN_FACTOR = 0.02
 HUD_SEPARATOR         = "   ·   "
 
-# -- Pasek czasu (tryb TIMED) --
+# -- Pasek czasu --
 TIMER_BAR_WIDTH_FACTOR = 0.60
 TIMER_BAR_HEIGHT       = 18
 TIMER_BAR_MARGIN_TOP   = 10
@@ -214,11 +215,33 @@ TIMER_BAR_BG           = (40, 40, 50)
 TIMER_BAR_FILL         = (90, 200, 255)
 TIMER_BAR_BORDER       = (160, 180, 200)
 TIMER_BAR_BORDER_W     = 2
+TIMER_BAR_WARN_COLOR   = (255, 170, 80)   
+TIMER_BAR_CRIT_COLOR   = (220, 80, 80)    
+TIMER_BAR_WARN_TIME    = 0.33             
+TIMER_BAR_CRIT_TIME    = 0.15             
 TIMER_BAR_BORDER_RADIUS= UI_RADIUS
+TIMER_BAR_TEXT_COLOR   = INK              
 
 # -- Baner Reguły --
 RULE_BANNER_ICON_SIZE_FACTOR = 0.22
 RULE_BANNER_GAP_FACTOR       = 0.06
+
+RULE_BANNER_IN_SEC      = 0.35
+RULE_BANNER_HOLD_SEC    = 1.20
+RULE_BANNER_OUT_SEC     = 0.35
+RULE_BANNER_TOTAL_SEC   = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_OUT_SEC
+
+RULE_PANEL_W_FACTOR     = 0.78
+RULE_PANEL_H_FACTOR     = 0.32
+RULE_PANEL_BG           = (22, 26, 34, 110)  # RGBA
+RULE_PANEL_BORDER       = (120, 200, 255)
+RULE_PANEL_BORDER_W     = 3
+RULE_PANEL_RADIUS       = 14
+
+RULE_ICON_SIZE_FACTOR   = 0.17
+RULE_ICON_GAP_FACTOR    = 0.04
+RULE_ARROW_W            = 6
+RULE_ARROW_COLOR        = (200, 220, 255)
 
 # -- Ekrany UI --
 MENU_TITLE_Y_FACTOR   = 0.28
@@ -329,6 +352,33 @@ def draw_symbol(surface: pygame.Surface, name: str, rect: pygame.Rect):
         img_rect = scaled_img.get_rect(center=rect.center)
         surface.blit(scaled_img, img_rect)
 
+def draw_arrow(surface: pygame.Surface, rect: pygame.Rect,
+            color=RULE_ARROW_COLOR, width=RULE_ARROW_W):
+    # spróbuj obrazka
+    path = CFG.get("images", {}).get("arrow")
+    img = IMAGES.load(path) if path else None
+    if img:
+        iw, ih = img.get_size()
+        scale = min(rect.width / iw, rect.height / ih)
+        new_size = (int(iw * scale), int(ih * scale))
+        scaled = pygame.transform.smoothscale(img, new_size)
+        r = scaled.get_rect(center=rect.center)
+        surface.blit(scaled, r)
+        return
+
+    # fallback: obrysowa strzałka
+    ax1 = rect.left + width
+    ax2 = rect.right - width * 1.5
+    ay  = rect.centery
+    pygame.draw.line(surface, color, (ax1, ay), (ax2, ay), width)
+
+    head_w = min(rect.width * 0.32, rect.height * 0.9)
+    half_h = min(rect.height * 0.45, rect.width * 0.28)
+    p1 = (ax2, ay)
+    p2 = (ax2 - head_w, ay - half_h)
+    p3 = (ax2 - head_w, ay + half_h)
+    pygame.draw.polygon(surface, color, (p1, p2, p3), width)
+
 # ========= GAME =========
 class Game:
     def __init__(self, screen: pygame.Surface, mode: Mode = Mode.SPEEDUP):
@@ -357,6 +407,7 @@ class Game:
         self.hits_since_rule = 0
         self.rule: Optional[Tuple[str,str]] = None
         self.rule_banner_until = 0.0
+        self.rule_banner_anim_start = 0.0
         self.pause_start = 0.0
         self.pause_until = 0.0
         self.shake_start = 0.0
@@ -447,7 +498,7 @@ class Game:
         self.screen = pygame.display.set_mode(size, flags)
         self.last_window_size = self.screen.get_size()
         if not fullscreen:
-            _persist_windowed_size(*self.last_window_size)  # zapamiętaj w configu
+            _persist_windowed_size(*self.last_window_size)
         self._recompute_layout()
 
     def _snap_to_aspect(self, width: int, height: int) -> Tuple[int, int]:
@@ -478,7 +529,7 @@ class Game:
         width, height = self._snap_to_aspect(width, height)
         self.screen = pygame.display.set_mode((width, height), WINDOWED_FLAGS)
         self.last_window_size = (width, height)
-        _persist_windowed_size(width, height)  # zapisz do configu
+        _persist_windowed_size(width, height)
         self._recompute_layout()
 
     # ----- settings (model + UI list) -----
@@ -518,7 +569,6 @@ class Game:
         if want_full:
             self.screen = pygame.display.set_mode((0,0), pygame.FULLSCREEN)
         else:
-            # użyj ostatniego rozmiaru lub tego z configu
             w, h = getattr(self, "last_window_size", None) or tuple(CFG.get("display", {}).get("windowed_size", WINDOWED_DEFAULT_SIZE))
             self.screen = pygame.display.set_mode((w, h), WINDOWED_FLAGS)
             _persist_windowed_size(*self.screen.get_size())
@@ -582,7 +632,7 @@ class Game:
         CFG["lives"] = int(s["lives"])
         CFG["audio"]["volume"] = float(s["volume"])
         CFG["display"]["fullscreen"] = bool(s["fullscreen"])
-        CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])  # <- ważne: przenieś z settings do CFG
+        CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
 
         save_config({
             "speedup": {
@@ -663,10 +713,14 @@ class Game:
         if self.rule == (a, b):
             b = random.choice([s for s in SYMS if s not in (a, b)])
         self.rule = (a, b)
+
         now = self.now()
-        self.rule_banner_until = now + RULE_BANNER_SEC
+        self.rule_banner_anim_start = now
+        self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
+
         self.pause_start = now
         self.pause_until = self.rule_banner_until
+
         if self.mode is Mode.TIMED:
             self.time_left += ADDITIONAL_RULE_TIME
 
@@ -767,41 +821,129 @@ class Game:
     def _blit_text(self, font, text, pos, color=INK):
         self.screen.blit(font.render(text, True, color), pos)
 
+    def _draw_timer_bar(self, ratio: float, top_y: int, label: Optional[str] = None):
+        ratio = max(0.0, min(1.0, ratio))
+
+        # dobór koloru wypełnienia wg progów
+        if ratio <= TIMER_BAR_CRIT_TIME:
+            fill_color = TIMER_BAR_CRIT_COLOR
+        elif ratio <= TIMER_BAR_WARN_TIME:
+            fill_color = TIMER_BAR_WARN_COLOR
+        else:
+            fill_color = TIMER_BAR_FILL
+
+        bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
+        bar_h = int(TIMER_BAR_HEIGHT)
+        bar_x = (self.w - bar_w) // 2
+        bar_y = top_y + self.font.get_height() + TIMER_BAR_MARGIN_TOP
+
+        # tło + wypełnienie + ramka
+        pygame.draw.rect(self.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+        fill_w = int(bar_w * ratio)
+        pygame.draw.rect(self.screen, fill_color, (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+        pygame.draw.rect(self.screen, TIMER_BAR_BORDER, (bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # napis na środku (opcjonalny)
+        if label:
+            # wybierz czcionkę – większa czytelność: użyj self.mid; albo self.timer_font jeśli utworzyłeś
+            timer_font = getattr(self, "timer_font", self.mid)  # fallback do self.mid
+            text_surf = timer_font.render(label, True, TIMER_BAR_TEXT_COLOR)
+
+            tx = bar_x + (bar_w - text_surf.get_width()) // 2
+            ty = bar_y + (bar_h - text_surf.get_height()) // 2
+
+            # cień
+            shadow = timer_font.render(label, True, (0, 0, 0))
+            self.screen.blit(shadow, (tx + 2, ty + 2))
+
+            # właściwy napis
+            self.screen.blit(text_surf, (tx, ty))
+
     def _draw_hud(self):
         top_y = int(self.h * HUD_TOP_MARGIN_FACTOR)
         hud_left = int(self.w * PADDING)
+
         parts = [f"Score: {self.score}"] if (self.scene is Scene.GAME and self.mode is Mode.TIMED) \
                 else [f"Score: {self.score}", f"Lives: {self.lives}"]
         self._blit_text(self.font, HUD_SEPARATOR.join(parts), (hud_left, top_y))
 
-        if self.scene is Scene.GAME and self.mode is Mode.TIMED:
-            bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
-            bar_h = int(TIMER_BAR_HEIGHT)
-            bar_x = (self.w - bar_w) // 2
-            bar_y = top_y + self.font.get_height() + TIMER_BAR_MARGIN_TOP
-            pygame.draw.rect(self.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
-            ratio = max(0.0, min(1.0, self.time_left / TIMED_DURATION))
-            fill_w = int(bar_w * ratio)
-            pygame.draw.rect(self.screen, TIMER_BAR_FILL, (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
-            pygame.draw.rect(self.screen, TIMER_BAR_BORDER, (bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
+        # Pasek czasu:
+        if self.scene is Scene.GAME:
+            if self.mode is Mode.TIMED:
+                # etykieta z jedną cyfrą po przecinku
+                self._draw_timer_bar(self.time_left / TIMED_DURATION, top_y, f"{self.time_left:.1f}s")
+            else:  # Mode.SPEEDUP – pasek pokazuje czas na ruch
+                if self.target_deadline is not None and self.target_time > 0:
+                    remaining = max(0.0, self.target_deadline - self.now())
+                    self._draw_timer_bar(remaining / max(0.001, self.target_time), top_y, f"{remaining:.1f}s")
+
 
         rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} → {self.rule[1]}"
         self._blit_text(self.font, rule_str, (hud_left, top_y + self.font.get_height() + 6), color=ACCENT)
 
+    def _ease_out_cubic(self, t: float) -> float:
+        t = max(0.0, min(1.0, t))
+        return 1 - (1 - t) ** 3
+
     def _draw_rule_banner(self):
-        size = self.w * RULE_BANNER_ICON_SIZE_FACTOR
-        left  = pygame.Rect(0, 0, size, size)
-        right = pygame.Rect(0, 0, size, size)
-        gap = self.w * RULE_BANNER_GAP_FACTOR
-        left.center  = (self.w/2 - (size/2 + gap/2), self.h/2)
-        right.center = (self.w/2 + (size/2 + gap/2), self.h/2)
-        draw_symbol(self.screen, self.rule[0], left)
-        draw_symbol(self.screen, self.rule[1], right)
-        arrow = self.big.render("→", True, INK)
-        self.screen.blit(arrow, (self.w/2 - arrow.get_width()/2, self.h/2 - arrow.get_height()/2))
-        rule_text = self.mid.render(f"Rule: {self.rule[0]} → {self.rule[1]}", True, ACCENT)
-        text_rect = rule_text.get_rect(center=(self.w/2, self.h/2 - size/2 - self.mid.get_height()))
-        self.screen.blit(rule_text, text_rect)
+        now = self.now()
+        t = now - self.rule_banner_anim_start
+        if t < 0: t = 0
+        if t > RULE_BANNER_TOTAL_SEC: t = RULE_BANNER_TOTAL_SEC
+
+        if t <= RULE_BANNER_IN_SEC:
+            p = self._ease_out_cubic(t / RULE_BANNER_IN_SEC)
+            phase = "in"
+        elif t <= RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC:
+            p = 1.0
+            phase = "hold"
+        else:
+            tt = (t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_OUT_SEC)
+            p = 1.0 - self._ease_out_cubic(tt)
+            phase = "out"
+
+        panel_w = int(self.w * RULE_PANEL_W_FACTOR)
+        panel_h = int(self.h * RULE_PANEL_H_FACTOR)
+        panel_x = (self.w - panel_w) // 2
+
+        mid_y   = int(self.h * 0.30)
+        top_y   = -panel_h
+        panel_y = int(top_y + (mid_y - top_y) * p)
+
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+
+        shadow = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0,0,0,120), shadow.get_rect(), border_radius=RULE_PANEL_RADIUS+2)
+        self.screen.blit(shadow, (panel_x+3, panel_y+5))
+
+        pygame.draw.rect(panel, RULE_PANEL_BG, panel.get_rect(), border_radius=RULE_PANEL_RADIUS)
+        pygame.draw.rect(panel, RULE_PANEL_BORDER, panel.get_rect(), width=RULE_PANEL_BORDER_W, border_radius=RULE_PANEL_RADIUS)
+
+        icon_size = int(self.w * RULE_ICON_SIZE_FACTOR)
+        gap = int(self.w * RULE_ICON_GAP_FACTOR)
+
+        cx = panel_w // 2
+        cy = panel_h // 2
+
+        left_rect  = pygame.Rect(0, 0, icon_size, icon_size)
+        right_rect = pygame.Rect(0, 0, icon_size, icon_size)
+
+        arrow_w = int(icon_size * 1.05)
+        arrow_h = int(icon_size * 0.55)
+        arrow_rect = pygame.Rect(0, 0, arrow_w, arrow_h)
+        arrow_rect.center = (cx, cy)
+
+        left_rect.center  = (cx - (arrow_rect.width // 2) - gap - icon_size // 2, cy)
+        right_rect.center = (cx + (arrow_rect.width // 2) + gap + icon_size // 2, cy)
+
+        draw_symbol(panel, self.rule[0], left_rect)
+        draw_arrow(panel, arrow_rect)
+        draw_symbol(panel, self.rule[1], right_rect)
+
+        label = self.mid.render(f"RULE: {self.rule[0]} → {self.rule[1]}", True, ACCENT)
+        panel.blit(label, ( (panel_w - label.get_width()) // 2, max(8, cy - icon_size//2 - label.get_height() - 6) ))
+
+        self.screen.blit(panel, (panel_x, panel_y))
 
     def _draw_gameplay(self):
         if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
