@@ -63,14 +63,13 @@ def _merge(dst: dict, src: dict) -> dict:
 
 def _sanitize_cfg(cfg: dict) -> dict:
     s = cfg["speedup"]
-    s["target_time_initial"] = float(max(0.2, min(10.0, s["target_time_initial"])))
-    s["target_time_min"]     = float(max(0.1, min(s["target_time_initial"], s["target_time_min"])))
-    s["target_time_step"]    = float(max(-1.0, min(1.0, s["target_time_step"])))
+    s["target_time_initial"] = float(max(0.2, min(10.0, s["target_time_initial"])) )
+    s["target_time_min"]     = float(max(0.1, min(s["target_time_initial"], s["target_time_min"])) )
+    s["target_time_step"]    = float(max(-1.0, min(1.0, s["target_time_step"])) )
     cfg["lives"]             = int(max(1, min(9, cfg["lives"])))
     cfg["audio"]["volume"]   = float(max(0.0, min(1.0, cfg["audio"]["volume"])))
     if "fps" in cfg["display"]:
         cfg["display"]["fps"] = int(max(30, min(240, cfg["display"]["fps"])))
-    # --- validate & normalize windowed_size (keep portrait default 720x1280) ---
     ws = cfg["display"].get("windowed_size", [720, 1280])
     if (isinstance(ws, (list, tuple)) and len(ws) == 2
         and all(isinstance(x, (int, float)) for x in ws)):
@@ -111,9 +110,7 @@ def load_config() -> dict:
 
 CFG = load_config()
 
-# helper: persist window size to config
 def _persist_windowed_size(width: int, height: int):
-    """Zapisz aktualny rozmiar okna do CFG i config.json."""
     try:
         CFG.setdefault("display", {})
         CFG["display"]["windowed_size"] = [int(width), int(height)]
@@ -148,8 +145,7 @@ class InputQueue:
         self._q.clear()
         return out
 
-# ========= CONSTANTS (visuals & gameplay & UI) =========
-# -- Kolory globalne --
+# ========= CONSTANTS =========
 BG       = (8, 10, 12)
 PAD      = (40, 44, 52)
 PAD_HI   = (90, 200, 255)
@@ -165,14 +161,10 @@ SYMBOL_COLORS = {
     "SQUARE":   (255, 215, 0),
 }
 
-# -- Layout globalny siatki padów --
 PADDING = 0.06
 GAP     = 0.04
+FPS     = CFG["display"]["fps"]
 
-# -- FPS z configu --
-FPS = CFG["display"]["fps"]
-
-# -- Parametry rozgrywki --
 TARGET_TIME_INITIAL   = CFG["speedup"]["target_time_initial"]
 TARGET_TIME_MIN       = CFG["speedup"]["target_time_min"]
 TARGET_TIME_STEP      = CFG["speedup"]["target_time_step"]
@@ -182,32 +174,38 @@ RULE_BANNER_SEC       = CFG["rules"]["banner_sec"]
 MAX_LIVES             = CFG["lives"]
 ADDITIONAL_RULE_TIME  = float(CFG["timed"].get("rule_bonus", 5.0))
 
-# -- Animacja symbolu --
 SYMBOL_BASE_SIZE_FACTOR  = 0.26
 SYMBOL_ANIM_TIME         = 0.30
 SYMBOL_ANIM_START_SCALE  = 0.20
 SYMBOL_ANIM_OFFSET_Y     = 0.08
 
-# -- „Shake” po animacji --
 SHAKE_DURATION        = 0.12
 SHAKE_AMPLITUDE_FACT  = 0.012
 SHAKE_FREQ_HZ         = 18.0
 
-# -- Wspólne promienie UI --
 UI_RADIUS = 8
 
-# -- Rysowanie symboli (fallback) --
 SYMBOL_DRAW_THICKNESS         = 20
 SYMBOL_SQUARE_RADIUS          = UI_RADIUS
 SYMBOL_CIRCLE_RADIUS_FACTOR   = 0.32
 SYMBOL_TRIANGLE_POINT_FACTOR  = 0.9
 SYMBOL_CROSS_K_FACTOR         = 1.0
 
-# -- HUD --
 HUD_TOP_MARGIN_FACTOR = 0.02
 HUD_SEPARATOR         = "   ·   "
 
-# -- Pasek czasu --
+# --- Glitch ---
+GLITCH_DURATION = 0.20
+GLITCH_PIXEL_FACTOR_MAX = 0.10
+GLITCH_FREQ_HZ = 60.0
+
+# --- Spawn anim ---
+SYMBOL_SPAWN_ANIM_DURATION = 0.40
+SYMBOL_SPAWN_GLITCH_DURATION = 0.02
+SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20
+SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15
+
+# --- Timer bar ---
 TIMER_BAR_WIDTH_FACTOR = 0.60
 TIMER_BAR_HEIGHT       = 18
 TIMER_BAR_MARGIN_TOP   = 10
@@ -215,74 +213,70 @@ TIMER_BAR_BG           = (40, 40, 50)
 TIMER_BAR_FILL         = (90, 200, 255)
 TIMER_BAR_BORDER       = (160, 180, 200)
 TIMER_BAR_BORDER_W     = 2
-TIMER_BAR_WARN_COLOR   = (255, 170, 80)   
-TIMER_BAR_CRIT_COLOR   = (220, 80, 80)    
-TIMER_BAR_WARN_TIME    = 0.33             
-TIMER_BAR_CRIT_TIME    = 0.15             
+TIMER_BAR_WARN_COLOR   = (255, 170, 80)
+TIMER_BAR_CRIT_COLOR   = (220, 80, 80)
+TIMER_BAR_WARN_TIME    = 0.33
+TIMER_BAR_CRIT_TIME    = 0.15
 TIMER_BAR_BORDER_RADIUS= UI_RADIUS
-TIMER_BAR_TEXT_COLOR   = INK              
+TIMER_BAR_TEXT_COLOR   = INK
+TIMER_FONT_SIZE        = 48
 
-# -- Baner Reguły --
+# --- Rule banner ---
 RULE_BANNER_ICON_SIZE_FACTOR = 0.22
 RULE_BANNER_GAP_FACTOR       = 0.06
-
 RULE_BANNER_IN_SEC      = 0.35
 RULE_BANNER_HOLD_SEC    = 1.20
 RULE_BANNER_OUT_SEC     = 0.35
 RULE_BANNER_TOTAL_SEC   = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_OUT_SEC
-
 RULE_PANEL_W_FACTOR     = 0.78
 RULE_PANEL_H_FACTOR     = 0.32
 RULE_PANEL_BG           = (22, 26, 34, 110)  # RGBA
 RULE_PANEL_BORDER       = (120, 200, 255)
 RULE_PANEL_BORDER_W     = 3
 RULE_PANEL_RADIUS       = 14
-
 RULE_ICON_SIZE_FACTOR   = 0.17
 RULE_ICON_GAP_FACTOR    = 0.04
 RULE_ARROW_W            = 6
 RULE_ARROW_COLOR        = (200, 220, 255)
 
-# -- Ekrany UI --
+# --- Screens ---
 MENU_TITLE_Y_FACTOR   = 0.28
 MENU_MODE_GAP         = 20
 MENU_HINT_GAP         = 48
 MENU_HINT2_EXTRA_GAP  = 12
-
 OVER_TITLE_OFFSET_Y   = -60
 OVER_SCORE_GAP1       = -10
 OVER_SCORE_GAP2       = 26
 OVER_INFO_GAP         = 60
-
 SETTINGS_TITLE_Y_FACTOR       = 0.18
 SETTINGS_LIST_Y_START_FACTOR  = 0.26
 SETTINGS_ITEM_SPACING         = 14
 SETTINGS_HELP_MARGIN_TOP      = 18
 SETTINGS_HELP_GAP             = 6
 
-# -- Aspect ratio snapping (portrait 9:16) --
+# --- Aspect ---
 ASPECT_RATIO            = (9, 16)
 ASPECT_SNAP_MIN_SIZE    = (360, 640)
 ASPECT_SNAP_TOLERANCE   = 0.0
 
-# -- Czcionka --
+# --- Fonts ---
 FONT_PATH        = "assets/font/Orbitron-VariableFont_wght.ttf"
 FONT_SIZE_SMALL  = 24
 FONT_SIZE_MID    = 36
 FONT_SIZE_BIG    = 48
 
-# -- Audio --
+# --- Audio ---
 MUSIC_FADEOUT_MS = 800
 
-# -- Okno (tryb windowed / resizable) --
+# --- Window ---
 WINDOWED_DEFAULT_SIZE = tuple(CFG.get("display", {}).get("windowed_size", (720, 1280)))
 WINDOWED_FLAGS        = pygame.RESIZABLE
 
-# -- GPIO --
+# --- GPIO ---
 GPIO_PULL_UP      = True
 GPIO_BOUNCE_TIME  = 0.05
 
-# -- Mapowanie klawiszy --
+# --- Keymap ---
 KEYMAP: Dict[int, str] = {
     pygame.K_UP: "TRIANGLE", pygame.K_RIGHT: "CIRCLE",  pygame.K_LEFT: "SQUARE", pygame.K_DOWN: "CROSS",
     pygame.K_w:  "TRIANGLE", pygame.K_d:     "CIRCLE",  pygame.K_a:   "SQUARE", pygame.K_s:   "CROSS",
@@ -292,10 +286,7 @@ def init_gpio(iq: InputQueue):
     if IS_WINDOWS or not GPIO_AVAILABLE:
         return {}
     pins = {"CIRCLE": PINS.CIRCLE, "CROSS": PINS.CROSS, "SQUARE": PINS.SQUARE, "TRIANGLE": PINS.TRIANGLE}
-    buttons = {
-        name: Button(pin, pull_up=GPIO_PULL_UP, bounce_time=GPIO_BOUNCE_TIME)
-        for name, pin in pins.items()
-    }
+    buttons = {name: Button(pin, pull_up=GPIO_PULL_UP, bounce_time=GPIO_BOUNCE_TIME) for name, pin in pins.items()}
     for name, btn in buttons.items():
         btn.when_pressed = (lambda n=name: iq.push(n))
     return buttons
@@ -353,8 +344,7 @@ def draw_symbol(surface: pygame.Surface, name: str, rect: pygame.Rect):
         surface.blit(scaled_img, img_rect)
 
 def draw_arrow(surface: pygame.Surface, rect: pygame.Rect,
-            color=RULE_ARROW_COLOR, width=RULE_ARROW_W):
-    # spróbuj obrazka
+               color=RULE_ARROW_COLOR, width=RULE_ARROW_W):
     path = CFG.get("images", {}).get("arrow")
     img = IMAGES.load(path) if path else None
     if img:
@@ -365,18 +355,13 @@ def draw_arrow(surface: pygame.Surface, rect: pygame.Rect,
         r = scaled.get_rect(center=rect.center)
         surface.blit(scaled, r)
         return
-
-    # fallback: obrysowa strzałka
     ax1 = rect.left + width
     ax2 = rect.right - width * 1.5
     ay  = rect.centery
     pygame.draw.line(surface, color, (ax1, ay), (ax2, ay), width)
-
     head_w = min(rect.width * 0.32, rect.height * 0.9)
     half_h = min(rect.height * 0.45, rect.width * 0.28)
-    p1 = (ax2, ay)
-    p2 = (ax2 - head_w, ay - half_h)
-    p3 = (ax2 - head_w, ay + half_h)
+    p1 = (ax2, ay); p2 = (ax2 - head_w, ay - half_h); p3 = (ax2 - head_w, ay + half_h)
     pygame.draw.polygon(surface, color, (p1, p2, p3), width)
 
 # ========= GAME =========
@@ -388,15 +373,20 @@ class Game:
 
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.Font(FONT_PATH, FONT_SIZE_SMALL)
-        self.big  = pygame.font.Font(FONT_PATH, FONT_SIZE_BIG)
-        self.mid  = pygame.font.Font(FONT_PATH, FONT_SIZE_MID)
+
+        self.font       = pygame.font.Font(FONT_PATH, FONT_SIZE_SMALL)
+        self.big        = pygame.font.Font(FONT_PATH, FONT_SIZE_BIG)
+        self.mid        = pygame.font.Font(FONT_PATH, FONT_SIZE_MID)
+        self.timer_font = pygame.font.Font(FONT_PATH, TIMER_FONT_SIZE)
 
         self.bg_img_raw = self._load_background()
         self.bg_img = None
 
         self._recompute_layout()
         self._rescale_background()
+
+        # offscreen framebuffer
+        self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
 
         # gameplay state
         self.score = 0
@@ -417,6 +407,10 @@ class Game:
         self._last_tick = 0.0
         self.highscore = int(CFG.get("highscore", 0))
 
+        # glitch state
+        self.glitch_active_until = 0.0
+        self.glitch_start_time = 0.0
+
         # settings buffer (ekran Settings)
         self.settings_idx = 0
         self.settings = {
@@ -436,6 +430,9 @@ class Game:
     # ----- utils -----
     def now(self) -> float: return time.time()
 
+    def _ensure_framebuffer(self):
+        self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+
     def _recompute_layout(self):
         self.w, self.h = self.screen.get_size()
         pad_w = (self.w * (1 - 2 * PADDING - GAP)) / 2
@@ -451,6 +448,7 @@ class Game:
             "CROSS":    pygame.Rect(x2, y2, pad_w, pad_h),
         }
         self._rescale_background()
+        self._ensure_framebuffer()
 
     def _ensure_music(self):
         if self.music_ok:
@@ -463,7 +461,7 @@ class Game:
                 self.music_ok = True
         except Exception:
             self.music_ok = False
-    
+
     def trigger_shake(self):
         now = self.now()
         self.shake_start = now
@@ -491,7 +489,12 @@ class Game:
 
     def _set_display_mode(self, fullscreen: bool):
         if fullscreen:
-            flags, size = pygame.FULLSCREEN, (0, 0)
+            try:
+                desktop_w, desktop_h = pygame.display.get_desktop_sizes()[0]
+            except Exception:
+                info = pygame.display.Info()
+                desktop_w, desktop_h = info.current_w, info.current_h
+            flags, size = pygame.NOFRAME, (desktop_w, desktop_h)  # borderless fullscreen
         else:
             size = WINDOWED_DEFAULT_SIZE
             flags = WINDOWED_FLAGS
@@ -502,37 +505,30 @@ class Game:
         self._recompute_layout()
 
     def _snap_to_aspect(self, width: int, height: int) -> Tuple[int, int]:
-        """Zwraca (w,h) dopasowane do ASPECT_RATIO, biorąc pod uwagę dominujący kierunek zmiany."""
         target_w, target_h = ASPECT_RATIO
         ratio = target_w / target_h
         last_w, last_h = getattr(self, "last_window_size", (width, height))
-
         if ASPECT_SNAP_TOLERANCE > 0:
             r = width / max(1, height)
             if abs(r - ratio) <= ASPECT_SNAP_TOLERANCE * ratio:
                 return max(ASPECT_SNAP_MIN_SIZE[0], width), max(ASPECT_SNAP_MIN_SIZE[1], height)
-
-        dw = abs(width - last_w)
-        dh = abs(height - last_h)
-        if dw >= dh:
-            height = int(round(width / ratio))
-        else:
-            width = int(round(height * ratio))
-
+        dw = abs(width - last_w); dh = abs(height - last_h)
+        if dw >= dh: height = int(round(width / ratio))
+        else:        width  = int(round(height * ratio))
         width  = max(ASPECT_SNAP_MIN_SIZE[0], width)
         height = max(ASPECT_SNAP_MIN_SIZE[1], height)
         return width, height
 
     def handle_resize(self, width: int, height: int):
         if bool(CFG.get("display", {}).get("fullscreen", True)):
-            return  # w fullscreen nie zmieniamy ręcznie
+            return
         width, height = self._snap_to_aspect(width, height)
         self.screen = pygame.display.set_mode((width, height), WINDOWED_FLAGS)
         self.last_window_size = (width, height)
         _persist_windowed_size(width, height)
         self._recompute_layout()
 
-    # ----- settings (model + UI list) -----
+    # ----- settings -----
     def settings_items(self):
         return [
             ("Initial time",  f"{self.settings['target_time_initial']:.2f}s", "target_time_initial"),
@@ -633,7 +629,6 @@ class Game:
         CFG["audio"]["volume"] = float(s["volume"])
         CFG["display"]["fullscreen"] = bool(s["fullscreen"])
         CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
-
         save_config({
             "speedup": {
                 "target_time_initial": CFG["speedup"]["target_time_initial"],
@@ -713,14 +708,11 @@ class Game:
         if self.rule == (a, b):
             b = random.choice([s for s in SYMS if s not in (a, b)])
         self.rule = (a, b)
-
         now = self.now()
         self.rule_banner_anim_start = now
         self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
-
         self.pause_start = now
         self.pause_until = self.rule_banner_until
-
         if self.mode is Mode.TIMED:
             self.time_left += ADDITIONAL_RULE_TIME
 
@@ -747,13 +739,12 @@ class Game:
             self.new_target()
         else:
             self.trigger_shake()
-
+            self.trigger_glitch()
             if self.mode is Mode.TIMED:
                 self.time_left -= 1.0
                 if self.time_left <= 0.0:
                     self.time_left = 0.0
                     self.end_game()
-
             if self.mode is Mode.SPEEDUP:
                 self.lives -= 1
                 if self.lives <= 0:
@@ -769,8 +760,7 @@ class Game:
             return
         if self.pause_until and now >= self.pause_until:
             paused = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
-            self.pause_start = 0.0
-            self.pause_until = 0.0
+            self.pause_start = 0.0; self.pause_until = 0.0
             if self.target_deadline is not None:
                 self.target_deadline += paused
             self._last_tick = now
@@ -785,34 +775,51 @@ class Game:
         if (self.mode is Mode.SPEEDUP and self.target is not None and
             self.target_deadline is not None and now > self.target_deadline):
             self.lives -= 1
+            self.trigger_glitch()
             if self.lives <= 0:
                 self.end_game(); return
             self.new_target()
         for n in iq.pop_all():
             self.handle_input_symbol(n)
-
-    # ----- event routing -----
+    
     def handle_event(self, event: pygame.event.Event, iq: InputQueue, keymap: Dict[int, str]):
         if event.type == pygame.VIDEORESIZE:
             self.handle_resize(event.w, event.h)
             return
+
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 pygame.quit(); sys.exit(0)
+
             if self.scene is Scene.MENU:
-                if event.key == pygame.K_RETURN: self.start_game()
-                elif event.key == pygame.K_m:    self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP)
-                elif event.key == pygame.K_o:    self.open_settings()
+                if event.key == pygame.K_RETURN:
+                    self.start_game()
+                elif event.key == pygame.K_m:
+                    self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP)
+                elif event.key == pygame.K_o:
+                    self.open_settings()
+
             elif self.scene is Scene.OVER:
-                if event.key == pygame.K_SPACE:  self.start_game()
+                if event.key == pygame.K_SPACE:
+                    self.start_game()
+
             elif self.scene is Scene.SETTINGS:
-                if   event.key == pygame.K_ESCAPE: self.settings_cancel()
-                elif event.key == pygame.K_RETURN: self.settings_save()
-                elif event.key == pygame.K_UP:     self.settings_move(-1)
-                elif event.key == pygame.K_DOWN:   self.settings_move(+1)
-                elif event.key == pygame.K_LEFT:   self.settings_adjust(-1)
-                elif event.key == pygame.K_RIGHT:  self.settings_adjust(+1)
-                elif event.key == pygame.K_r:      self.settings_reset_highscore()
+                if   event.key == pygame.K_ESCAPE:
+                    self.settings_cancel()
+                elif event.key == pygame.K_RETURN:
+                    self.settings_save()
+                elif event.key == pygame.K_UP:
+                    self.settings_move(-1)
+                elif event.key == pygame.K_DOWN:
+                    self.settings_move(+1)
+                elif event.key == pygame.K_LEFT:
+                    self.settings_adjust(-1)
+                elif event.key == pygame.K_RIGHT:
+                    self.settings_adjust(+1)
+                elif event.key == pygame.K_r:
+                    self.settings_reset_highscore()
+
+            # mapowanie klawiszy na symbole (działa w każdej scenie)
             name = keymap.get(event.key)
             if name:
                 iq.push(name)
@@ -823,223 +830,258 @@ class Game:
 
     def _draw_timer_bar(self, ratio: float, top_y: int, label: Optional[str] = None):
         ratio = max(0.0, min(1.0, ratio))
-
-        # dobór koloru wypełnienia wg progów
-        if ratio <= TIMER_BAR_CRIT_TIME:
-            fill_color = TIMER_BAR_CRIT_COLOR
-        elif ratio <= TIMER_BAR_WARN_TIME:
-            fill_color = TIMER_BAR_WARN_COLOR
-        else:
-            fill_color = TIMER_BAR_FILL
-
+        if ratio <= TIMER_BAR_CRIT_TIME:   fill_color = TIMER_BAR_CRIT_COLOR
+        elif ratio <= TIMER_BAR_WARN_TIME: fill_color = TIMER_BAR_WARN_COLOR
+        else:                              fill_color = TIMER_BAR_FILL
         bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
         bar_h = int(TIMER_BAR_HEIGHT)
         bar_x = (self.w - bar_w) // 2
         bar_y = top_y + self.font.get_height() + TIMER_BAR_MARGIN_TOP
-
-        # tło + wypełnienie + ramka
-        pygame.draw.rect(self.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+        pygame.draw.rect(self.screen, TIMER_BAR_BG,   (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
         fill_w = int(bar_w * ratio)
-        pygame.draw.rect(self.screen, fill_color, (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
-        pygame.draw.rect(self.screen, TIMER_BAR_BORDER, (bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
-
-        # napis na środku (opcjonalny)
+        pygame.draw.rect(self.screen, fill_color,     (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+        pygame.draw.rect(self.screen, TIMER_BAR_BORDER,(bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
         if label:
-            # wybierz czcionkę – większa czytelność: użyj self.mid; albo self.timer_font jeśli utworzyłeś
-            timer_font = getattr(self, "timer_font", self.mid)  # fallback do self.mid
+            timer_font = getattr(self, "timer_font", self.mid)
             text_surf = timer_font.render(label, True, TIMER_BAR_TEXT_COLOR)
-
             tx = bar_x + (bar_w - text_surf.get_width()) // 2
             ty = bar_y + (bar_h - text_surf.get_height()) // 2
-
-            # cień
             shadow = timer_font.render(label, True, (0, 0, 0))
             self.screen.blit(shadow, (tx + 2, ty + 2))
-
-            # właściwy napis
             self.screen.blit(text_surf, (tx, ty))
 
     def _draw_hud(self):
         top_y = int(self.h * HUD_TOP_MARGIN_FACTOR)
         hud_left = int(self.w * PADDING)
-
         parts = [f"Score: {self.score}"] if (self.scene is Scene.GAME and self.mode is Mode.TIMED) \
                 else [f"Score: {self.score}", f"Lives: {self.lives}"]
         self._blit_text(self.font, HUD_SEPARATOR.join(parts), (hud_left, top_y))
-
-        # Pasek czasu:
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
-                # etykieta z jedną cyfrą po przecinku
                 self._draw_timer_bar(self.time_left / TIMED_DURATION, top_y, f"{self.time_left:.1f}s")
-            else:  # Mode.SPEEDUP – pasek pokazuje czas na ruch
+            else:
                 if self.target_deadline is not None and self.target_time > 0:
                     remaining = max(0.0, self.target_deadline - self.now())
                     self._draw_timer_bar(remaining / max(0.001, self.target_time), top_y, f"{remaining:.1f}s")
-
-
         rule_str = "Rule: none" if not self.rule else f"Rule: {self.rule[0]} → {self.rule[1]}"
         self._blit_text(self.font, rule_str, (hud_left, top_y + self.font.get_height() + 6), color=ACCENT)
 
     def _ease_out_cubic(self, t: float) -> float:
-        t = max(0.0, min(1.0, t))
-        return 1 - (1 - t) ** 3
-
+        t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
+    
     def _draw_rule_banner(self):
         now = self.now()
         t = now - self.rule_banner_anim_start
         if t < 0: t = 0
         if t > RULE_BANNER_TOTAL_SEC: t = RULE_BANNER_TOTAL_SEC
-
-        if t <= RULE_BANNER_IN_SEC:
-            p = self._ease_out_cubic(t / RULE_BANNER_IN_SEC)
-            phase = "in"
-        elif t <= RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC:
-            p = 1.0
-            phase = "hold"
+        if t <= RULE_BANNER_IN_SEC:      p = self._ease_out_cubic(t / RULE_BANNER_IN_SEC)
+        elif t <= RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC: p = 1.0
         else:
             tt = (t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_OUT_SEC)
             p = 1.0 - self._ease_out_cubic(tt)
-            phase = "out"
 
         panel_w = int(self.w * RULE_PANEL_W_FACTOR)
         panel_h = int(self.h * RULE_PANEL_H_FACTOR)
         panel_x = (self.w - panel_w) // 2
-
         mid_y   = int(self.h * 0.30)
         top_y   = -panel_h
         panel_y = int(top_y + (mid_y - top_y) * p)
 
         panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-
         shadow = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
         pygame.draw.rect(shadow, (0,0,0,120), shadow.get_rect(), border_radius=RULE_PANEL_RADIUS+2)
         self.screen.blit(shadow, (panel_x+3, panel_y+5))
-
         pygame.draw.rect(panel, RULE_PANEL_BG, panel.get_rect(), border_radius=RULE_PANEL_RADIUS)
         pygame.draw.rect(panel, RULE_PANEL_BORDER, panel.get_rect(), width=RULE_PANEL_BORDER_W, border_radius=RULE_PANEL_RADIUS)
 
         icon_size = int(self.w * RULE_ICON_SIZE_FACTOR)
         gap = int(self.w * RULE_ICON_GAP_FACTOR)
-
-        cx = panel_w // 2
-        cy = panel_h // 2
-
+        cx = panel_w // 2; cy = panel_h // 2
         left_rect  = pygame.Rect(0, 0, icon_size, icon_size)
         right_rect = pygame.Rect(0, 0, icon_size, icon_size)
-
-        arrow_w = int(icon_size * 1.05)
-        arrow_h = int(icon_size * 0.55)
-        arrow_rect = pygame.Rect(0, 0, arrow_w, arrow_h)
-        arrow_rect.center = (cx, cy)
-
+        arrow_w = int(icon_size * 1.05); arrow_h = int(icon_size * 0.55)
+        arrow_rect = pygame.Rect(0, 0, arrow_w, arrow_h); arrow_rect.center = (cx, cy)
         left_rect.center  = (cx - (arrow_rect.width // 2) - gap - icon_size // 2, cy)
         right_rect.center = (cx + (arrow_rect.width // 2) + gap + icon_size // 2, cy)
-
         draw_symbol(panel, self.rule[0], left_rect)
         draw_arrow(panel, arrow_rect)
         draw_symbol(panel, self.rule[1], right_rect)
-
         label = self.mid.render(f"RULE: {self.rule[0]} → {self.rule[1]}", True, ACCENT)
         panel.blit(label, ( (panel_w - label.get_width()) // 2, max(8, cy - icon_size//2 - label.get_height() - 6) ))
-
         self.screen.blit(panel, (panel_x, panel_y))
+
+    def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect):
+        age   = self.now() - self.symbol_spawn_time
+        t     = 0.0 if SYMBOL_ANIM_TIME <= 0 else min(1.0, max(0.0, age / SYMBOL_ANIM_TIME))
+        eased = 1.0 - (1.0 - t) ** 3  # ease-out-cubic
+
+        base_size = self.w * SYMBOL_BASE_SIZE_FACTOR
+        scale     = SYMBOL_ANIM_START_SCALE + (1.0 - SYMBOL_ANIM_START_SCALE) * eased
+        size      = base_size * scale
+
+        # zjazd z dołu do środka (efekt głębi)
+        start_y = self.h * (0.5 + SYMBOL_ANIM_OFFSET_Y)
+        end_y   = self.h * 0.5
+        cy      = start_y + (end_y - start_y) * eased
+
+        # shake (delikatny, opcjonalny)
+        dx = dy = 0.0
+        now = self.now()
+        if now < self.shake_until:
+            sh_t = (now - self.shake_start) / SHAKE_DURATION
+            sh_t = max(0.0, min(1.0, sh_t))
+            env = 1.0 - sh_t
+            amp = self.w * SHAKE_AMPLITUDE_FACT * env
+            phase = 2.0 * math.pi * SHAKE_FREQ_HZ * (now - self.shake_start)
+            dx = amp * math.sin(phase)
+            dy = 0.5 * amp * math.cos(phase * 0.9)
+
+        draw_rect = pygame.Rect(0, 0, size, size)
+        draw_rect.center = (self.w * 0.5 + dx, cy + dy)
+
+        draw_symbol(surface, name, draw_rect)
 
     def _draw_gameplay(self):
         if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
         else:           self.screen.fill(BG)
+
         self._draw_hud()
 
         if self.target:
-            age   = self.now() - self.symbol_spawn_time
-            t     = 0.0 if SYMBOL_ANIM_TIME <= 0 else min(1.0, max(0.0, age / SYMBOL_ANIM_TIME))
-            eased = 1.0 - (1.0 - t) ** 3
+            base_rect = pygame.Rect(0, 0, self.w * SYMBOL_BASE_SIZE_FACTOR, self.w * SYMBOL_BASE_SIZE_FACTOR)
+            base_rect.center = (self.w * 0.5, self.h * 0.5)
+            self._draw_spawn_animation(self.screen, self.target, base_rect)
 
-            base_size = self.w * SYMBOL_BASE_SIZE_FACTOR
-            scale     = SYMBOL_ANIM_START_SCALE + (1.0 - SYMBOL_ANIM_START_SCALE) * eased
-            size      = base_size * scale
+    # --- glitch compositing on framebuffer ---
+    def _apply_glitch_effect(self, frame: pygame.Surface) -> pygame.Surface:
+        now = self.now()
+        if now >= self.glitch_active_until:
+            return frame
 
-            start_y = self.h * (0.5 + SYMBOL_ANIM_OFFSET_Y)
-            end_y   = self.h * 0.5
-            cy      = start_y + (end_y - start_y) * eased
+        dur = max(1e-6, GLITCH_DURATION)
+        t = 1.0 - (self.glitch_active_until - now) / dur                # 0..1
+        vigor = (1 - abs(0.5 - t) * 2)                                  # najmocniej w środku
 
-            dx = dy = 0.0
-            now = self.now()
-            if now < self.shake_until:
-                sh_t = (now - self.shake_start) / SHAKE_DURATION
-                sh_t = max(0.0, min(1.0, sh_t))
-                env = 1.0 - sh_t
-                amp = self.w * SHAKE_AMPLITUDE_FACT * env
-                phase = 2.0 * math.pi * SHAKE_FREQ_HZ * (now - self.shake_start)
-                dx = amp * math.sin(phase)
-                dy = 0.5 * amp * math.cos(phase * 0.9)
+        # 1) pixelation
+        pf = GLITCH_PIXEL_FACTOR_MAX * vigor
+        if pf > 0:
+            sw, sh = max(1, int(self.w * (1 - pf))), max(1, int(self.h * (1 - pf)))
+            small = pygame.transform.smoothscale(frame, (sw, sh))
+            frame = pygame.transform.scale(small, (self.w, self.h))
 
-            center_rect = pygame.Rect(0, 0, size, size)
-            center_rect.center = (self.w * 0.5 + dx, cy + dy)
-            draw_symbol(self.screen, self.target, center_rect)
+        out = frame.copy()
 
-    def _draw_menu(self):
-        title = self.big.render("4-Symbols", True, INK)
-        self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*MENU_TITLE_Y_FACTOR))
-        mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
-        mode_text = self.mid.render(f"Mode: {mode_label}  (M = change)", True, ACCENT)
-        self.screen.blit(mode_text, (self.w/2 - mode_text.get_width()/2,
-                                     self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_MODE_GAP))
-        hint = self.font.render("ENTER = start   ·   ESC/Q = quit", True, INK)
-        self.screen.blit(hint, (self.w/2 - hint.get_width()/2,
-                                self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height()))
-        hint2 = self.font.render("O = settings", True, INK)
-        self.screen.blit(hint2, (self.w/2 - hint2.get_width()/2,
-                                 self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height() + hint.get_height() + MENU_HINT2_EXTRA_GAP))
+        # 2) RGB split
+        ch_off = int(6 * vigor) + random.randint(0, 2)
+        if ch_off:
+            for (mask, dx, dy) in (
+                ((255, 0, 0, 255),  ch_off, 0),
+                ((0, 255, 0, 255), -ch_off, 0),
+                ((0, 0, 255, 255),  0, ch_off),
+            ):
+                chan = frame.copy()
+                tint = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+                tint.fill(mask)
+                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
 
-    def _draw_over(self):
-        over = self.big.render("GAME OVER", True, INK)
-        self.screen.blit(over, (self.w/2 - over.get_width()/2, self.h/2 - over.get_height()/2 + OVER_TITLE_OFFSET_Y))
-        score_s = self.mid.render(f"Score: {self.score}", True, ACCENT)
-        hs_s    = self.mid.render(f"Best:  {self.highscore}", True, ACCENT)
-        self.screen.blit(score_s, (self.w/2 - score_s.get_width()/2, self.h/2 - score_s.get_height()/2 + OVER_SCORE_GAP1))
-        self.screen.blit(hs_s,    (self.w/2 - hs_s.get_width()/2,    self.h/2 - hs_s.get_height()/2 + OVER_SCORE_GAP2))
-        info = self.font.render("SPACE = play again   ·   ESC = quit", True, INK)
-        self.screen.blit(info, (self.w/2 - info.get_width()/2, self.h/2 + OVER_INFO_GAP))
+        # 3) displaced horizontal bands
+        if random.random() < 0.9:
+            bands = random.randint(2, 4)
+            band_h = max(4, self.h // (bands * 8))
+            for _ in range(bands):
+                y = random.randint(0, self.h - band_h)
+                dx = random.randint(-int(self.w*0.03), int(self.w*0.03))
+                slice_rect = pygame.Rect(0, y, self.w, band_h)
+                slice_surf = out.subsurface(slice_rect).copy()
+                out.blit(slice_surf, (dx, y))
 
-    def _draw_settings(self):
-        title = self.big.render("Settings", True, INK)
-        self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*SETTINGS_TITLE_Y_FACTOR))
-        items = self.settings_items()
-        y = self.h * SETTINGS_LIST_Y_START_FACTOR
-        for i, (label, value, key) in enumerate(items):
-            is_sel = (i == self.settings_idx and key is not None)
-            surf = self.mid.render(f"{label}: {value}", True, ACCENT if is_sel else INK)
-            self.screen.blit(surf, (self.w/2 - surf.get_width()/2, y))
-            y += surf.get_height() + SETTINGS_ITEM_SPACING
-        help1 = self.font.render("↑/↓ select · ←/→ adjust · R reset high score", True, INK)
-        help2 = self.font.render("ENTER save · ESC back", True, INK)
-        self.screen.blit(help1, (self.w/2 - help1.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP))
-        self.screen.blit(help2, (self.w/2 - help2.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP + help1.get_height() + SETTINGS_HELP_GAP))
+        # 4) colored blocks
+        if random.random() < 0.4:
+            w = random.randint(self.w // 12, self.w // 4)
+            h = random.randint(self.h // 24, self.h // 8)
+            x = random.randint(0, max(0, self.w - w))
+            y = random.randint(0, max(0, self.h - h))
+            col = (random.randint(180, 255), random.randint(120, 255),
+                   random.randint(120, 255), random.randint(40, 100))
+            pygame.draw.rect(out, col, (x, y, w, h))
+
+        return out
+
+    def trigger_glitch(self):
+        now = self.now()
+        self.glitch_active_until = now + GLITCH_DURATION
+        self.glitch_start_time = now
+        self.trigger_shake()
 
     def draw(self):
-        if self.scene is Scene.GAME and self.now() < self.rule_banner_until and self.rule:
-            if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-            else:           self.screen.fill(BG)
-            self._draw_rule_banner()
-        elif self.scene is Scene.GAME:
-            self._draw_gameplay()
-        elif self.scene is Scene.MENU:
-            if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-            else:           self.screen.fill(BG)
-            self._draw_menu()
-        elif self.scene is Scene.OVER:
-            if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-            else:           self.screen.fill(BG)
-            self._draw_over()
-        elif self.scene is Scene.SETTINGS:
-            if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
-            else:           self.screen.fill(BG)
-            self._draw_settings()
+        # rysujemy NA BUFOR zamiast bezpośrednio na ekran
+        self.fb.fill((0,0,0,0))
+        old_screen = self.screen
+        self.screen = self.fb  # przekieruj wszystkie metody rysujące
+        try:
+            if self.scene is Scene.GAME and self.now() < self.rule_banner_until and self.rule:
+                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
+                else:           self.screen.fill(BG)
+                self._draw_rule_banner()
+            elif self.scene is Scene.GAME:
+                self._draw_gameplay()
+            elif self.scene is Scene.MENU:
+                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
+                else:           self.screen.fill(BG)
+                # menu
+                title = self.big.render("4-Symbols", True, INK)
+                self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*MENU_TITLE_Y_FACTOR))
+                mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
+                mode_text = self.mid.render(f"Mode: {mode_label}  (M = change)", True, ACCENT)
+                self.screen.blit(mode_text, (self.w/2 - mode_text.get_width()/2,
+                                             self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_MODE_GAP))
+                hint = self.font.render("ENTER = start   ·   ESC/Q = quit", True, INK)
+                self.screen.blit(hint, (self.w/2 - hint.get_width()/2,
+                                        self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height()))
+                hint2 = self.font.render("O = settings", True, INK)
+                self.screen.blit(hint2, (self.w/2 - hint2.get_width()/2,
+                                         self.h*MENU_TITLE_Y_FACTOR + title.get_height() + MENU_HINT_GAP + mode_text.get_height() + hint.get_height() + MENU_HINT2_EXTRA_GAP))
+            elif self.scene is Scene.OVER:
+                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
+                else:           self.screen.fill(BG)
+                over = self.big.render("GAME OVER", True, INK)
+                self.screen.blit(over, (self.w/2 - over.get_width()/2, self.h/2 - over.get_height()/2 + OVER_TITLE_OFFSET_Y))
+                score_s = self.mid.render(f"Score: {self.score}", True, ACCENT)
+                hs_s    = self.mid.render(f"Best:  {self.highscore}", True, ACCENT)
+                self.screen.blit(score_s, (self.w/2 - score_s.get_width()/2, self.h/2 - score_s.get_height()/2 + OVER_SCORE_GAP1))
+                self.screen.blit(hs_s,    (self.w/2 - hs_s.get_width()/2,    self.h/2 - hs_s.get_height()/2 + OVER_SCORE_GAP2))
+                info = self.font.render("SPACE = play again   ·   ESC = quit", True, INK)
+                self.screen.blit(info, (self.w/2 - info.get_width()/2, self.h/2 + OVER_INFO_GAP))
+            elif self.scene is Scene.SETTINGS:
+                if self.bg_img: self.screen.blit(self.bg_img, (0, 0))
+                else:           self.screen.fill(BG)
+                title = self.big.render("Settings", True, INK)
+                self.screen.blit(title, (self.w/2 - title.get_width()/2, self.h*SETTINGS_TITLE_Y_FACTOR))
+                items = self.settings_items()
+                y = self.h * SETTINGS_LIST_Y_START_FACTOR
+                for i, (label, value, key) in enumerate(items):
+                    is_sel = (i == self.settings_idx and key is not None)
+                    surf = self.mid.render(f"{label}: {value}", True, ACCENT if is_sel else INK)
+                    self.screen.blit(surf, (self.w/2 - surf.get_width()/2, y))
+                    y += surf.get_height() + SETTINGS_ITEM_SPACING
+                help1 = self.font.render("↑/↓ select · ←/→ adjust · R reset high score", True, INK)
+                help2 = self.font.render("ENTER save · ESC back", True, INK)
+                self.screen.blit(help1, (self.w/2 - help1.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP))
+                self.screen.blit(help2, (self.w/2 - help2.get_width()/2, y + SETTINGS_HELP_MARGIN_TOP + help1.get_height() + SETTINGS_HELP_GAP))
+        finally:
+            # przywróć
+            self.screen = old_screen
+
+        # nałóż glitch na bufor, a potem wyświetl
+        final_surface = self._apply_glitch_effect(self.fb)
+        self.screen.blit(final_surface, (0, 0))
         pygame.display.flip()
 
 # ========= MAIN LOOP =========
 def main():
+    os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"  # start w lewym górnym rogu
+
     pygame.init()
     fullscreen = bool(CFG.get("display", {}).get("fullscreen", True))
     screen = pygame.display.set_mode((1, 1))
