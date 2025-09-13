@@ -220,7 +220,7 @@ TIMER_BAR_CRIT_TIME    = 0.15
 TIMER_BAR_BORDER_RADIUS= UI_RADIUS
 TIMER_BAR_TEXT_COLOR   = INK
 TIMER_FONT_SIZE        = 48
-TIMER_BOTTOM_MARGIN_FACTOR = 0.03  # margines od dołu
+TIMER_BOTTOM_MARGIN_FACTOR = 0.03  
 
 # --- Rule banner ---
 RULE_BANNER_ICON_SIZE_FACTOR = 0.22
@@ -229,23 +229,23 @@ RULE_BANNER_IN_SEC      = 0.35
 RULE_BANNER_HOLD_SEC    = 1.20
 RULE_BANNER_TO_TOP_SEC  = 0.35
 RULE_BANNER_TOTAL_SEC   = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_TO_TOP_SEC
-RULE_PANEL_W_FACTOR     = 0.78
+RULE_PANEL_W_FACTOR     = 0.50
 RULE_PANEL_H_FACTOR     = 0.32
-RULE_PANEL_BG           = (22, 26, 34, 110)  # RGBA
+RULE_PANEL_BG           = (22, 26, 34, 110) 
 RULE_PANEL_BORDER       = (120, 200, 255)
 RULE_PANEL_BORDER_W     = 3
-RULE_PANEL_RADIUS       = 14
-RULE_ICON_SIZE_FACTOR   = 0.17
+RULE_PANEL_RADIUS       = 30
+RULE_ICON_SIZE_FACTOR   = 0.1
 RULE_ICON_GAP_FACTOR    = 0.04
 RULE_ARROW_W            = 6
 RULE_ARROW_COLOR        = (200, 220, 255)
 
 # Skale panelu i symboli
-RULE_BANNER_PIN_SCALE       = 0.40  # skala całego panelu gdy przypięty
-RULE_SYMBOL_SCALE_CENTER    = 1.00  # skala symboli gdy baner na środku
-RULE_SYMBOL_SCALE_PINNED    = 0.70  # skala symboli gdy baner przypięty u góry (niezależna od panelu)
-RULE_SYMBOL_Y_OFFSET_CENTER = 0.00  # brak przesunięcia na środku
-RULE_SYMBOL_Y_OFFSET_PINNED = 0.1  # ~6% wysokości panelu w dół, gdy przypięty
+RULE_BANNER_PIN_SCALE       = 0.60  
+RULE_SYMBOL_SCALE_CENTER    = 1.00  
+RULE_SYMBOL_SCALE_PINNED    = 0.70  
+RULE_SYMBOL_Y_OFFSET_CENTER = 0.00  
+RULE_SYMBOL_Y_OFFSET_PINNED = 0.1  
 
 # --- Screens ---
 MENU_TITLE_Y_FACTOR   = 0.28
@@ -358,6 +358,7 @@ class Game:
         self.target_time = TARGET_TIME_INITIAL
         self.hits_since_rule = 0
         self.rule: Optional[Tuple[str,str]] = None
+        self.rule_banner_from_pinned = False
         self.rule_banner_until = 0.0
         self.rule_banner_anim_start = 0.0
         self.pause_start = 0.0
@@ -739,12 +740,15 @@ class Game:
         self.symbol_spawn_time = self.now()
 
     def roll_rule(self):
+        was_pinned = (self.rule is not None and self.now() >= self.rule_banner_until)
         a = random.choice(SYMS)
         b = random.choice([s for s in SYMS if s != a])
         if self.rule == (a, b):
             b = random.choice([s for s in SYMS if s not in (a, b)])
         self.rule = (a, b)
+
         now = self.now()
+        self.rule_banner_from_pinned = was_pinned  # <-- KLUCZOWE
         self.rule_banner_anim_start = now
         self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
         self.pause_start = now
@@ -1037,7 +1041,7 @@ class Game:
         self.draw_arrow(panel, arrow_rect)
         self.draw_symbol(panel, self.rule[1], right_rect)
 
-        label = self.mid.render(f"RULE: {self.rule[0]} → {self.rule[1]}", True, ACCENT)
+        label = self.mid.render(f"RULE: {self.rule[0]} -> {self.rule[1]}", True, ACCENT)
         panel.blit(label, ((panel_w - label.get_width()) // 2,
                         max(8, cy - icon_size//2 - label.get_height() - 6)))
         return panel, shadow
@@ -1048,17 +1052,37 @@ class Game:
         if t < 0: t = 0
         if t > RULE_BANNER_TOTAL_SEC: t = RULE_BANNER_TOTAL_SEC
 
-        # Fazy
         if t <= RULE_BANNER_IN_SEC:
             p = self._ease_out_cubic(t / RULE_BANNER_IN_SEC)
-            panel_scale = 1.0
-            symbol_scale = RULE_SYMBOL_SCALE_CENTER
-            y_bias = RULE_SYMBOL_Y_OFFSET_CENTER
-            panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, y_bias)
-            panel_w, panel_h = panel.get_size()
-            start_y = -panel_h
-            mid_y = int(self.h * 0.30)
-            y = int(start_y + (mid_y - start_y) * p)
+
+            if getattr(self, "rule_banner_from_pinned", False):
+                start_scale  = RULE_BANNER_PIN_SCALE
+                end_scale    = 1.0
+                start_sym    = RULE_SYMBOL_SCALE_PINNED
+                end_sym      = RULE_SYMBOL_SCALE_CENTER
+                start_bias   = RULE_SYMBOL_Y_OFFSET_PINNED
+                end_bias     = RULE_SYMBOL_Y_OFFSET_CENTER
+
+                panel_scale  = start_scale + (end_scale - start_scale) * p
+                symbol_scale = start_sym   + (end_sym   - start_sym)   * p
+                y_bias       = start_bias  + (end_bias  - start_bias)  * p
+
+                panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, y_bias)
+                panel_w, panel_h = panel.get_size()
+
+                pinned_y = int(self.h * HUD_TOP_MARGIN_FACTOR)
+                mid_y    = int(self.h * 0.30)
+                y = int(pinned_y + (mid_y - pinned_y) * p)
+
+            else:
+                panel_scale = 1.0
+                symbol_scale = RULE_SYMBOL_SCALE_CENTER
+                y_bias = RULE_SYMBOL_Y_OFFSET_CENTER
+                panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, y_bias)
+                panel_w, panel_h = panel.get_size()
+                start_y = -panel_h
+                mid_y = int(self.h * 0.30)
+                y = int(start_y + (mid_y - start_y) * p)
 
         elif t <= RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC:
             panel_scale = 1.0
@@ -1067,6 +1091,7 @@ class Game:
             panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, y_bias)
             panel_w, panel_h = panel.get_size()
             y = int(self.h * 0.30)
+            self.rule_banner_from_pinned = False
 
         else:
             tt = (t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_TO_TOP_SEC)
