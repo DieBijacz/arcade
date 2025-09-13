@@ -352,6 +352,7 @@ class Game:
         # gameplay state
         self.score = 0
         self.lives = MAX_LIVES
+        self.streak = 0
         self.target: Optional[str] = None
         self.target_deadline: Optional[float] = None
         self.target_time = TARGET_TIME_INITIAL
@@ -697,6 +698,7 @@ class Game:
     # ----- gameplay flow -----
     def reset_game_state(self):
         self.score = 0
+        self.streak = 0
         self.lives = int(self.settings.get("lives", MAX_LIVES))
         self.target = None
         self.target_deadline = None
@@ -760,6 +762,7 @@ class Game:
         required = self.apply_rule(self.target)
         if name == required:
             self.score += 1
+            self.streak += 1
             self.hits_since_rule += 1
             if self.mode is Mode.TIMED:
                 self.time_left += 1.0
@@ -774,6 +777,7 @@ class Game:
             self.lock_until_all_released = True
             self.accept_after = self.now() + 0.12
         else:
+            self.streak = 0
             self.trigger_shake()
             self.trigger_glitch()
             if self.mode is Mode.TIMED:
@@ -814,6 +818,7 @@ class Game:
         if (self.mode is Mode.SPEEDUP and self.target is not None and
             self.target_deadline is not None and now > self.target_deadline):
             self.lives -= 1
+            self.streak = 0
             self.trigger_glitch()
             if self.lives <= 0:
                 self.end_game(); return
@@ -982,12 +987,14 @@ class Game:
 
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
-                _ = self.draw_chip(f"Score: {self.score}", x, y)
+                r_score = self.draw_chip(f"Score: {self.score}", x, y)               
+                _ = self.draw_chip(f"Streak: {self.streak}", r_score.right + gap, y)  
                 self._draw_timer_bar_bottom(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
 
             elif self.mode is Mode.SPEEDUP:
-                r_score = self.draw_chip(f"Score: {self.score}", x, y)
-                _ = self.draw_chip(f"Lives: {self.lives}", r_score.right + gap, y)
+                r_score = self.draw_chip(f"Score: {self.score}", x, y)                  
+                r_streak = self.draw_chip(f"Streak: {self.streak}", r_score.right + gap, y)  
+                _ = self.draw_chip(f"Lives: {self.lives}", r_streak.right + gap, y)   
                 if self.target_deadline is not None and self.target_time > 0:
                     remaining = max(0.0, self.target_deadline - self.now())
                     ratio = remaining / max(0.001, self.target_time)
