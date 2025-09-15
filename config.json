@@ -23,7 +23,7 @@
     "rule_bonus": 5.0
   },
   "rules": {
-    "every_hits": 5,
+    "every_hits": 10,
     "banner_sec": 2.0
   },
   "lives": 3,
@@ -34,5 +34,8 @@
     },
     "volume": 0.5
   },
-  "highscore": 79
+  "highscore": 79,
+  "effects": {
+    "glitch_enabled": true
+  }
 }

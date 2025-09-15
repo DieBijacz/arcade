@@ -1,4 +1,3 @@
-from __future__ import annotations 
 import json, os, random, sys, time
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -37,9 +36,10 @@ DEFAULT_CFG = {
     "display":    {"fullscreen": True, "fps": 60, "windowed_size": [720, 1280]},
     "speedup":    {"target_time_initial": 3, "target_time_min": 0.45, "target_time_step": -0.03},
     "timed":      {"duration": 60.0, "rule_bonus": 5.0},
-    "rules":      {"every_hits": 5, "banner_sec": 2.0},
+    "rules":      {"every_hits": 10, "banner_sec": 2.0},
     "lives":      3,
     "audio":      {"music": "assets/music.ogg", "volume": 0.5},
+    "effects":   { "glitch_enabled": True },
     "images":     {
         "background": "assets/images/bg.png",
         "symbol_circle": "assets/images/circle.png",
@@ -199,6 +199,13 @@ GLITCH_DURATION = 0.20
 GLITCH_PIXEL_FACTOR_MAX = 0.10
 GLITCH_FREQ_HZ = 60.0
 
+# --- Text Glitch ---
+TEXT_GLITCH_DURATION   = 0.3
+TEXT_GLITCH_MIN_GAP    = 1   
+TEXT_GLITCH_MAX_GAP    = 5.0   
+TEXT_GLITCH_CHAR_PROB  = 0.01
+TEXT_GLITCH_CHARSET    = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"
+
 # --- Spawn anim ---
 SYMBOL_SPAWN_ANIM_DURATION = 0.40
 SYMBOL_SPAWN_GLITCH_DURATION = 0.02
@@ -218,9 +225,12 @@ TIMER_BAR_CRIT_COLOR   = (220, 80, 80)
 TIMER_BAR_WARN_TIME    = 0.33
 TIMER_BAR_CRIT_TIME    = 0.15
 TIMER_BAR_BORDER_RADIUS= UI_RADIUS
+TIMER_BOTTOM_MARGIN_FACTOR = 0.03  
 TIMER_BAR_TEXT_COLOR   = INK
 TIMER_FONT_SIZE        = 48
-TIMER_BOTTOM_MARGIN_FACTOR = 0.03  
+TIMER_POSITION_INDICATOR_W   = 4      
+TIMER_POSITION_INDICATOR_PAD = 3      
+TIMER_LABEL_GAP              = 8      
 
 # --- Rule banner ---
 RULE_BANNER_ICON_SIZE_FACTOR = 0.22
@@ -374,6 +384,8 @@ class Game:
         self.glitch_active_until = 0.0
         self.glitch_start_time = 0.0
         self.glitch_mag = 1.0
+        self.text_glitch_active_until = 0.0
+        self.next_text_glitch_at = self.now() + random.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
 
         # settings buffer (ekran Settings)
         self.settings_idx = 0
@@ -382,6 +394,7 @@ class Game:
             "target_time_step":    float(CFG["speedup"]["target_time_step"]),
             "target_time_min":     float(CFG["speedup"]["target_time_min"]),
             "lives":               int(CFG["lives"]),
+            "glitch_enabled":      bool(CFG.get("effects", {}).get("glitch_enabled", True)),
             "volume":              float(CFG["audio"]["volume"]),
             "fullscreen":          bool(CFG["display"]["fullscreen"]),
             "timed_rule_bonus":    float(CFG["timed"].get("rule_bonus", 5.0)),
@@ -432,14 +445,23 @@ class Game:
         self.shake_until = now + SHAKE_DURATION
     
     def trigger_glitch(self, mag: float = 1.0, duration: float = GLITCH_DURATION):
+        if not self.settings.get("glitch_enabled", True):
+            return
+             
         now = self.now()
         self.glitch_mag = max(0.0, mag)
         self.glitch_active_until = now + max(0.01, duration)
         self.glitch_start_time = now
         self.trigger_shake()
+
+        if random.random() < 0.5:
+            self.trigger_text_glitch()
     
     def _apply_glitch_effect(self, frame: pygame.Surface) -> pygame.Surface:
-        now = self.now()
+        if not self.settings.get("glitch_enabled", True):
+            return frame
+        
+        now = self.now()        
         if now >= self.glitch_active_until:
             return frame
 
@@ -493,6 +515,36 @@ class Game:
             pygame.draw.rect(out, col, (x, y, w, h))
 
         return out
+
+    def trigger_text_glitch(self, duration: float = TEXT_GLITCH_DURATION):
+        if not self.settings.get("glitch_enabled", True):
+            return
+        
+        now = self.now()
+        self.text_glitch_active_until = now + max(0.05, duration)
+        self.next_text_glitch_at = now + random.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
+
+    def is_text_glitch_active(self) -> bool:
+        return self.now() < self.text_glitch_active_until
+
+    def _maybe_start_text_glitch(self):
+        if not self.settings.get("glitch_enabled", True):
+            return
+        
+        now = self.now()
+        if now >= self.next_text_glitch_at and not self.is_text_glitch_active():
+            self.trigger_text_glitch()
+
+    def _glitch_text(self, text: str) -> str:
+        out_chars = []
+        for ch in text:
+            if ch.isspace():
+                out_chars.append(ch)
+            elif random.random() < TEXT_GLITCH_CHAR_PROB:
+                out_chars.append(random.choice(TEXT_GLITCH_CHARSET))
+            else:
+                out_chars.append(ch)
+        return "".join(out_chars)
 
     def _load_background(self):
         path = CFG.get("images", {}).get("background") if isinstance(CFG.get("images"), dict) else None
@@ -564,6 +616,7 @@ class Game:
             ("Lives",         f"{int(self.settings['lives'])}", "lives"),
             ("Volume",        f"{self.settings['volume']:.2f}", "volume"),
             ("Fullscreen",    "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
+            ("Glitch",        "ON" if self.settings.get('glitch_enabled', True) else "OFF", "glitch_enabled"),  # NOWE
             ("High score",    f"{self.highscore}", None),
             ("Rule bonus",    f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
         ]
@@ -615,6 +668,14 @@ class Game:
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
+        
+        if key == "glitch_enabled":
+            self.settings["glitch_enabled"] = not self.settings["glitch_enabled"]
+            if not self.settings["glitch_enabled"]:
+                self.glitch_active_until = 0.0
+                self.text_glitch_active_until = 0.0
+            return
+
         step = {
             "target_time_initial": 0.1,
             "target_time_step":    0.01,
@@ -642,6 +703,7 @@ class Game:
             "target_time_step":    float(CFG["speedup"]["target_time_step"]),
             "target_time_min":     float(CFG["speedup"]["target_time_min"]),
             "lives":               int(CFG["lives"]),
+            "glitch_enabled":      bool(CFG.get("effects", {}).get("glitch_enabled", True)),
             "volume":              float(CFG["audio"]["volume"]),
             "fullscreen":          bool(CFG["display"]["fullscreen"]),
             "timed_rule_bonus":    float(CFG["timed"].get("rule_bonus", 5.0)),
@@ -660,6 +722,8 @@ class Game:
             "target_time_min":     float(s["target_time_min"]),
         })
         CFG["lives"] = int(s["lives"])
+        CFG["effects"] = CFG.get("effects", {})
+        CFG["effects"]["glitch_enabled"] = bool(s["glitch_enabled"])
         CFG["audio"]["volume"] = float(s["volume"])
         CFG["display"]["fullscreen"] = bool(s["fullscreen"])
         CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
@@ -670,6 +734,9 @@ class Game:
                 "target_time_min":     CFG["speedup"]["target_time_min"],
             },
             "lives":   CFG["lives"],
+                        "effects": {
+                "glitch_enabled": CFG["effects"]["glitch_enabled"],
+            },
             "audio":   {"volume": CFG["audio"]["volume"]},
             "display": {
                 "fullscreen":   CFG["display"]["fullscreen"],
@@ -796,6 +863,8 @@ class Game:
 
     def update(self, iq: InputQueue):
         now = self.now()
+        self._maybe_start_text_glitch()
+
         if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
             self.lock_until_all_released = False     
 
@@ -884,10 +953,12 @@ class Game:
 
     # ----- rendering -----
     def draw_text(self, font, text, pos, color=INK, shadow=True):
+        render_text = self._glitch_text(text) if self.is_text_glitch_active() else text
+
         if shadow:
-            shadow_surf = font.render(text, True, (0, 0, 0))
+            shadow_surf = font.render(render_text, True, (0, 0, 0))
             self.screen.blit(shadow_surf, (pos[0] + 2, pos[1] + 2))
-        txt_surf = font.render(text, True, color)
+        txt_surf = font.render(render_text, True, color)
         self.screen.blit(txt_surf, pos)
 
     def _draw_timer_bar_bottom(self, ratio: float, label: Optional[str] = None):
@@ -895,20 +966,54 @@ class Game:
         if ratio <= TIMER_BAR_CRIT_TIME:   fill_color = TIMER_BAR_CRIT_COLOR
         elif ratio <= TIMER_BAR_WARN_TIME: fill_color = TIMER_BAR_WARN_COLOR
         else:                              fill_color = TIMER_BAR_FILL
+
         bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
         bar_h = int(TIMER_BAR_HEIGHT)
         bar_x = (self.w - bar_w) // 2
         bottom_margin = int(self.h * TIMER_BOTTOM_MARGIN_FACTOR)
         bar_y = self.h - bottom_margin - bar_h
-        pygame.draw.rect(self.screen, TIMER_BAR_BG,   (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # tło paska
+        pygame.draw.rect(self.screen, TIMER_BAR_BG,
+                         (bar_x, bar_y, bar_w, bar_h),
+                         border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # wypełnienie
         fill_w = int(bar_w * ratio)
-        pygame.draw.rect(self.screen, fill_color,     (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
-        pygame.draw.rect(self.screen, TIMER_BAR_BORDER,(bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
+        if fill_w > 0:
+            pygame.draw.rect(self.screen, fill_color,
+                             (bar_x, bar_y, fill_w, bar_h),
+                             border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # ramka
+        pygame.draw.rect(self.screen, TIMER_BAR_BORDER,
+                         (bar_x, bar_y, bar_w, bar_h),
+                         width=TIMER_BAR_BORDER_W,
+                         border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # --- NOWE: pionowy indykator aktualnej pozycji timera ---
+        indicator_x = bar_x + fill_w
+        ind_w = int(TIMER_POSITION_INDICATOR_W)
+        ind_pad = int(TIMER_POSITION_INDICATOR_PAD)
+        # upewnij się, że kreska jest zawsze widoczna w granicach paska
+        indicator_x = max(bar_x, min(bar_x + bar_w, indicator_x))
+        indicator_rect = pygame.Rect(indicator_x - ind_w // 2,
+                                     bar_y - ind_pad,
+                                     ind_w,
+                                     bar_h + ind_pad * 2)
+        pygame.draw.rect(self.screen, ACCENT, indicator_rect)
+
+        # --- ZMIANA: label nad paskiem ---
         if label:
             timer_font = getattr(self, "timer_font", self.mid)
-            tx = bar_x + bar_w // 2
-            ty = bar_y + bar_h // 2
-            self.draw_text(timer_font, label, (tx - timer_font.size(label)[0] // 2, ty - timer_font.size(label)[1] // 2), color=TIMER_BAR_TEXT_COLOR)
+            lw, lh = timer_font.size(label)
+            tx = bar_x + (bar_w - lw) // 2
+            ty = bar_y - lh - TIMER_LABEL_GAP
+            # cień + tekst
+            shadow_surf = timer_font.render(label, True, (0, 0, 0))
+            self.screen.blit(shadow_surf, (tx + 2, ty + 2))
+            txt_surf = timer_font.render(label, True, TIMER_BAR_TEXT_COLOR)
+            self.screen.blit(txt_surf, (tx, ty))
 
     def draw_symbol(self, surface: pygame.Surface, name: str, rect: pygame.Rect):
         path = self.cfg["images"].get(f"symbol_{name.lower()}")
