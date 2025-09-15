@@ -309,7 +309,8 @@ KEYMAP: Dict[int, str] = {
 }
 
 # --- Minimal HUD (nowe stałe)
-SAFE_AREA_PX         = 100           # minimalny odstęp HUD od krawędzi (safe area)
+SAFE_AREA_X_FACTOR   = 0.06   # 6% szerokości ekranu z lewej/prawej
+SAFE_AREA_Y_FACTOR   = 0.06   # 6% wysokości ekranu od góry/dół
 BIG_COUNTER_FONT_PX  = 128          # rozmiar cyfr Score/Streak
 LABEL_SHOW_SEC       = 1.2          # ile sekund pokazywać etykietę po zmianie
 LIVES_ICON_SIZE_PX   = 20           # średnica ikonki życia
@@ -454,6 +455,10 @@ class Game:
         }
         self._rescale_background()
         self._ensure_framebuffer()
+        self.safe_left   = int(self.w * SAFE_AREA_X_FACTOR)
+        self.safe_right  = int(self.w * SAFE_AREA_X_FACTOR)
+        self.safe_top    = int(self.h * SAFE_AREA_Y_FACTOR)
+        self.safe_bottom = int(self.h * SAFE_AREA_Y_FACTOR)
 
     def _ensure_music(self):
         if self.music_ok:
@@ -1151,28 +1156,27 @@ class Game:
       # ===== Minimal HUD (scalona, JEDYNA wersja) =====
     def _draw_minimal_hud(self, *, show_timer: bool = True):
         # safe area
-        left_x  = SAFE_AREA_PX
-        right_x = self.w - SAFE_AREA_PX
-        top_y   = SAFE_AREA_PX
+        left_x  = self.safe_left
+        right_x = self.w - self.safe_right
+        top_y   = self.safe_top
 
-        # SCORE: duża cyfra w lewym górnym rogu
-        self.rect_score = self._draw_big_number(self.score, (left_x, top_y), color=INK)
-        if self._should_show_label(self.rect_score, self.last_score_change):
-            self._draw_label_above("Score", self.rect_score)
-
+        lw, lh = self.font.size("Score")
+        gap = 6
+        self.rect_score = self._draw_big_number(self.score, (left_x, top_y + lh + gap), color=INK)
+        self._draw_label_above("Score", self.rect_score)
+        
         # LIVES: ikonki poniżej score
         lives_y = self.rect_score.bottom + 12
         self.rect_lives = self._draw_lives_icons(left_x, lives_y)
         if self._should_show_label(self.rect_lives, self.last_lives_change):
             self._draw_label_above("Lives", self.rect_lives)
 
-        # STREAK: duża cyfra po prawej z 🔥 — tylko jeśli > 10
+        # STREAK: duża cyfra po prawej — tylko jeśli > 10
         if self.streak >= STREAK_MIN_VISIBLE:
             txt = str(self.streak)
             surf = self.counter_font.render(txt, True, INK)
             x = right_x - surf.get_width()
             self.rect_streak = self._draw_big_number(self.streak, (x, top_y), color=INK)
-            self._draw_streak_fire(self.rect_streak)
             if self._should_show_label(self.rect_streak, self.last_streak_change):
                 self._draw_label_above("Streak", self.rect_streak)
         else:
