@@ -24,7 +24,9 @@
   },
   "rules": {
     "every_hits": 10,
-    "banner_sec": 2.0
+    "banner_sec": 2.0,
+    "banner_font_center": 64,
+    "banner_font_pinned": 40
   },
   "lives": 3,
   "audio": {

@@ -225,8 +225,8 @@ TIMER_BAR_BORDER       = (160, 180, 200) # kolor obramowania
 TIMER_BAR_BORDER_W     = 2        # grubość obramowania
 TIMER_BAR_WARN_COLOR   = (255, 170, 80) # kolor stanu ostrzegawczego
 TIMER_BAR_CRIT_COLOR   = (220, 80, 80)  # kolor stanu krytycznego
-TIMER_BAR_WARN_TIME    = 0.33     # próg (ułamek 0..1) dla ostrzeżenia
-TIMER_BAR_CRIT_TIME    = 0.15     # próg (ułamek 0..1) dla krytyku
+TIMER_BAR_WARN_TIME    = 0.50     # próg (ułamek 0..1) dla ostrzeżenia
+TIMER_BAR_CRIT_TIME    = 0.25     # próg (ułamek 0..1) dla krytyku
 TIMER_BAR_BORDER_RADIUS= UI_RADIUS  # zaokrąglenie paska
 TIMER_BOTTOM_MARGIN_FACTOR = 0.03   # margines od dołu ekranu
 TIMER_BAR_TEXT_COLOR   = INK       # kolor etykiety czasu
@@ -256,8 +256,8 @@ RULE_ARROW_COLOR        = (200, 220, 255)  # kolor strzałki
 RULE_BANNER_PIN_SCALE       = 0.60  # skala panelu gdy „zadokowany” pod HUD
 RULE_SYMBOL_SCALE_CENTER    = 1.00  # skala symboli w fazie środkowej animacji
 RULE_SYMBOL_SCALE_PINNED    = 0.70  # skala symboli w wersji zadokowanej
-RULE_SYMBOL_Y_OFFSET_CENTER = 0.00  # pionowe przesunięcie ikon w fazie środkowej
-RULE_SYMBOL_Y_OFFSET_PINNED = 0.1   # pionowe przesunięcie ikon w doku
+RULE_SYMBOL_Y_OFFSET_CENTER = 0.2  # pionowe przesunięcie ikon w fazie środkowej
+RULE_SYMBOL_Y_OFFSET_PINNED = 0.2   # pionowe przesunięcie ikon w doku
 
 # --- Screens ---
 MENU_TITLE_Y_FACTOR   = 0.28  # pionowa pozycja tytułu w menu
@@ -273,6 +273,34 @@ SETTINGS_LIST_Y_START_FACTOR  = 0.26 # start listy opcji w Settings
 SETTINGS_ITEM_SPACING         = 14   # pionowy odstęp między pozycjami
 SETTINGS_HELP_MARGIN_TOP      = 18   # margines nad helpem
 SETTINGS_HELP_GAP             = 6    # odstęp między liniami helpa
+
+# --- Top Header & Score Capsule (layout + typography) ---
+TOPBAR_HEIGHT_FACTOR          = 0.1   # height of the top header vs screen height
+TOPBAR_PAD_X_FACTOR           = 0.045   # horizontal padding inside the header (left/right)
+TOPBAR_UNDERLINE_THICKNESS    = 4       # thickness of the cyan underline
+TOPBAR_UNDERLINE_COLOR        = (90, 200, 255)  # cyan, same family as PAD_HI
+
+# Score capsule sizes
+SCORE_CAPSULE_WIDTH_FACTOR    = 0.42    # width of the score capsule vs screen width
+SCORE_CAPSULE_HEIGHT_FACTOR   = 0.15    # base height of the capsule
+SCORE_CAPSULE_BORDER_COLOR    = (120, 200, 255, 220)
+SCORE_CAPSULE_BG              = (22, 26, 34, 170)
+SCORE_CAPSULE_RADIUS          = 26
+SCORE_CAPSULE_SHADOW          = (0, 0, 0, 140)
+SCORE_CAPSULE_SHADOW_OFFSET   = (3, 5)
+
+# Make sure the score capsule is *a bit taller* than the header:
+SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15      # at least this many px taller than header
+
+# Typography for labels/values
+HUD_LABEL_FONT_SIZE           = 22
+HUD_VALUE_FONT_SIZE           = 40
+SCORE_LABEL_FONT_SIZE         = 26
+SCORE_VALUE_FONT_SIZE         = 64
+HUD_LABEL_COLOR               = (180, 200, 230)
+HUD_VALUE_COLOR               = INK
+SCORE_LABEL_COLOR             = ACCENT
+SCORE_VALUE_COLOR             = INK
 
 # --- Aspect ---
 ASPECT_RATIO            = (9, 16)  # docelowe proporcje okna
@@ -357,6 +385,11 @@ class Game:
         self.big        = pygame.font.Font(FONT_PATH, FONT_SIZE_BIG)
         self.mid        = pygame.font.Font(FONT_PATH, FONT_SIZE_MID)
         self.timer_font = pygame.font.Font(FONT_PATH, TIMER_FONT_SIZE)
+        self.hud_label_font  = pygame.font.Font(FONT_PATH, HUD_LABEL_FONT_SIZE)
+        self.hud_value_font  = pygame.font.Font(FONT_PATH, HUD_VALUE_FONT_SIZE)
+        self.score_label_font = pygame.font.Font(FONT_PATH, SCORE_LABEL_FONT_SIZE)
+        self.score_value_font = pygame.font.Font(FONT_PATH, SCORE_VALUE_FONT_SIZE)
+
         self.rule_font_center = None  
         self.rule_font_pinned = None  
         self._build_rule_fonts()
@@ -423,6 +456,8 @@ class Game:
 
     def _recompute_layout(self):
         self.w, self.h = self.screen.get_size()
+
+        # --- Pads layout (unchanged for gameplay area) ---
         pad_w = (self.w * (1 - 2 * PADDING - GAP)) / 2
         pad_h = (self.h * (1 - 2 * PADDING - GAP)) / 2
         x1 = self.w * PADDING
@@ -435,6 +470,28 @@ class Game:
             "SQUARE":   pygame.Rect(x1, y2, pad_w, pad_h),
             "CROSS":    pygame.Rect(x2, y2, pad_w, pad_h),
         }
+
+            # --- NEW: top header and score capsule geometry ---
+        self.topbar_h = int(self.h * TOPBAR_HEIGHT_FACTOR)
+        self.topbar_rect = pygame.Rect(0, 0, self.w, self.topbar_h)
+
+        # score capsule should be a bit taller than header
+        cap_h = int(self.h * SCORE_CAPSULE_HEIGHT_FACTOR)
+        if cap_h <= self.topbar_h:
+            cap_h = self.topbar_h + SCORE_CAPSULE_MIN_HEIGHT_BONUS
+
+        cap_w = int(self.w * SCORE_CAPSULE_WIDTH_FACTOR)
+        self.score_capsule_rect = pygame.Rect(0, 0, cap_w, cap_h)
+
+        # Desired: centered on the header
+        desired_cy = self.topbar_rect.top + self.topbar_h // 2
+
+        # Minimum center so the capsule never goes off-screen at the top
+        min_cy = cap_h // 2 + 4  # 4px breathing room
+
+        cy = max(min_cy, desired_cy)
+        self.score_capsule_rect.center = (self.w // 2, cy)
+
         self._rescale_background()
         self._ensure_framebuffer()
     
@@ -1116,36 +1173,98 @@ class Game:
         self.screen.blit(chip, (x, y))
         return pygame.Rect(x, y, w, h)
 
+    def _draw_round_rect(self, surf: pygame.Surface, rect: pygame.Rect, fill, border=None, border_w=1, radius=12):
+        # draw filled rounded rect + optional border (RGBA supported)
+        rr = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(rr, fill, rr.get_rect(), border_radius=radius)
+        if border is not None and border_w > 0:
+            pygame.draw.rect(rr, border, rr.get_rect(), width=border_w, border_radius=radius)
+        surf.blit(rr, rect.topleft)
+
+    def _draw_label_value_vstack(self, *, label: str, value: str, left: bool, anchor_rect: pygame.Rect):
+        # Draw LABEL (small) above VALUE (big) inside an anchor area.
+        # Align left or right edges depending on `left`.
+        label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
+        value_surf = self.hud_value_font.render(value, True, HUD_VALUE_COLOR)
+
+        total_h = label_surf.get_height() + 2 + value_surf.get_height()
+        y = anchor_rect.centery - total_h // 2
+
+        if left:
+            lx = anchor_rect.left
+            vx = anchor_rect.left
+        else:
+            lx = anchor_rect.right - label_surf.get_width()
+            vx = anchor_rect.right - value_surf.get_width()
+
+        # subtle shadow for readability
+        self.screen.blit(label_surf, (lx + 1, y + 1))
+        self.screen.blit(value_surf, (vx + 2, y + label_surf.get_height() + 3))
+
     def _draw_hud(self):
-        top_y = int(self.h * HUD_TOP_MARGIN_FACTOR)
-        side_pad_x = int(self.w * PADDING)
-        gap = 10
+        # Header underline (cyan) spanning full width
+        pygame.draw.line(
+            self.screen,
+            TOPBAR_UNDERLINE_COLOR,
+            (self.topbar_rect.left, self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2),
+            (self.topbar_rect.right, self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2),
+            TOPBAR_UNDERLINE_THICKNESS,
+        )
 
-        # left chip: STREAK
-        left_rect = self.draw_chip(f"Streak: {self.streak}", side_pad_x, top_y)
+        # Left: STREAK   |  Right: HIGHSCORE
+        pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
+        left_block = pygame.Rect(self.topbar_rect.left + pad_x, self.topbar_rect.top,
+                                 max(1, self.w // 3 - pad_x), self.topbar_rect.height)
+        right_block = pygame.Rect(self.topbar_rect.right - pad_x - max(1, self.w // 3 - pad_x),
+                                  self.topbar_rect.top, max(1, self.w // 3 - pad_x), self.topbar_rect.height)
 
-        # right chip: HIGHSCORE
-        hs_text = f"Highscore: {self.highscore}"
-        # temp render to know width with small font
-        hs_rect = self.draw_chip(hs_text, 0, -1000)   # offscreen; we don't keep it
-        hs_w, hs_h = hs_rect.size
-        right_x = self.w - side_pad_x - hs_w
-        right_rect = self.draw_chip(hs_text, right_x, top_y)
+        self._draw_label_value_vstack(
+            label="STREAK",
+            value=str(self.streak),
+            left=True,
+            anchor_rect=left_block,
+        )
+        self._draw_label_value_vstack(
+            label="HIGHSCORE",
+            value=str(self.highscore),
+            left=False,
+            anchor_rect=right_block,
+        )
 
-        # center chip: SCORE (bigger font)
-        score_text = f"Score: {self.score}"
-        # estimate centered using mid font inside chip
-        tmp = self.mid.render(score_text, True, INK)
-        score_w = tmp.get_width() + 20
-        score_h = tmp.get_height() + 20
-        cx = (self.w - score_w) // 2
-        center_rect = self.draw_chip(score_text, cx, top_y, font=self.mid)
+        # Center: SCORE capsule (bigger than header height)
+        cap = self.score_capsule_rect
+        # shadow
+        sx, sy = SCORE_CAPSULE_SHADOW_OFFSET
+        shadow_rect = cap.move(sx, sy)
+        self._draw_round_rect(self.screen, shadow_rect, SCORE_CAPSULE_SHADOW, radius=SCORE_CAPSULE_RADIUS+2)
+        # body + border
+        self._draw_round_rect(
+            self.screen, cap, SCORE_CAPSULE_BG,
+            border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
+        )
 
-        # remember where the top bar ends; the rule banner docks below this
-        bar_h = max(left_rect.height, center_rect.height, right_rect.height)
-        self._topbar_bottom_y = top_y + bar_h + int(self.h * 0.02)
+        # SCORE label + value centered inside capsule
+        label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
+        value_surf = self.score_value_font.render(str(self.score), True, SCORE_VALUE_COLOR)
 
-        # --- Timer bar (bottom) ---
+        # vertical stacking in the capsule
+        gap = 2
+        total_h = label_surf.get_height() + gap + value_surf.get_height()
+        lx = cap.centerx - label_surf.get_width() // 2
+        vx = cap.centerx - value_surf.get_width() // 2
+        ly = cap.centery - total_h // 2
+        vy = ly + label_surf.get_height() + gap
+
+        # slight inner shadow for clarity
+        self.screen.blit(label_surf, (lx + 1, ly + 1))
+        self.screen.blit(value_surf, (vx + 1, vy + 1))
+        self.screen.blit(label_surf, (lx, ly))
+        self.screen.blit(value_surf, (vx, vy))
+
+        # update docking line for rule panel
+        self._topbar_bottom_y = self.topbar_rect.bottom + int(self.h * 0.02)
+
+        # --- Timer bar (bottom) stays as before ---
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
                 self._draw_timer_bar_bottom(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
