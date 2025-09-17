@@ -240,24 +240,21 @@ RULE_BANNER_IN_SEC      = 0.35       # czas wjazdu banera
 RULE_BANNER_HOLD_SEC    = 2.0       # czas pozostania na środku
 RULE_BANNER_TO_TOP_SEC  = 0.35       # czas wyjazdu do góry/doku
 RULE_BANNER_TOTAL_SEC   = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_TO_TOP_SEC  # łączny czas animacji
-RULE_PANEL_W_FACTOR     = 0.75       # szerokość panelu względem ekranu
-RULE_PANEL_H_FACTOR     = 0.30       # wysokość panelu względem ekranu
 RULE_PANEL_BG           = (22, 26, 34, 110)  # kolor tła panelu (z alfa)
 RULE_PANEL_BORDER       = (120, 200, 255)    # kolor ramki panelu
 RULE_PANEL_BORDER_W     = 3          # grubość ramki panelu
 RULE_PANEL_RADIUS       = 30         # zaokrąglenie rogów panelu
 RULE_ICON_SIZE_FACTOR   = 0.1        # wielkość ikon (w panelu) względem szerokości ekranu
-RULE_BANNER_LABEL_GAP   = 2          # odstęp między etykietą a ikonami
 RULE_ICON_GAP_FACTOR    = 0.04       # odstęp między ikonami a strzałką w panelu
 RULE_ARROW_W            = 6          # grubość rysowanej strzałki
 RULE_ARROW_COLOR        = (200, 220, 255)  # kolor strzałki
-
-# Skale panelu i symboli
-RULE_BANNER_PIN_SCALE       = 0.60  # skala panelu gdy „zadokowany” pod HUD
+RULE_PANEL_PAD            = 16   # wewnętrzny padding panelu (px)
+RULE_BANNER_VGAP          = 8    # pionowy odstęp: GAP -> TITLE -> GAP -> SYMBOLS -> GAP
+RULE_BANNER_TITLE         = "NEW RULE:"  # tytuł nad ikonami
+RULE_BANNER_PIN_SCALE       = 0.50  # skala panelu gdy „zadokowany” pod HUD
 RULE_SYMBOL_SCALE_CENTER    = 1.00  # skala symboli w fazie środkowej animacji
 RULE_SYMBOL_SCALE_PINNED    = 0.70  # skala symboli w wersji zadokowanej
-RULE_SYMBOL_Y_OFFSET_CENTER = 0.2  # pionowe przesunięcie ikon w fazie środkowej
-RULE_SYMBOL_Y_OFFSET_PINNED = 0.2   # pionowe przesunięcie ikon w doku
+RULE_BANNER_MIN_W_FACTOR = 0.80
 
 # --- Screens ---
 MENU_TITLE_Y_FACTOR   = 0.28  # pionowa pozycja tytułu w menu
@@ -1276,148 +1273,143 @@ class Game:
     def _ease_out_cubic(self, t: float) -> float:
         t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
 
-    def _render_rule_panel_surface(self, panel_scale: float, symbol_scale: float, y_bias: float = 0.0, *, label_font: Optional[pygame.font.Font] = None):
-        panel_scale = max(0.2, panel_scale)
-        symbol_scale = max(0.2, symbol_scale)
+    def _render_rule_panel_surface(self, panel_scale: float, symbol_scale: float, *, label_font: Optional[pygame.font.Font] = None,):
+        """Rysuje panel reguły. Rozmiar wyliczany z treści:
+        GAP -> NEW RULE -> GAP -> ICON LINE -> GAP.
+        Zwraca (panel_surface, shadow_surface)."""
 
-        panel_w = int(self.w * RULE_PANEL_W_FACTOR * panel_scale)
-        panel_h = int(self.h * RULE_PANEL_H_FACTOR * panel_scale)
+        panel_scale  = max(0.2, float(panel_scale))
+        symbol_scale = max(0.2, float(symbol_scale))
 
-        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-        shadow = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-        pygame.draw.rect(shadow, (0,0,0,120), shadow.get_rect(), border_radius=RULE_PANEL_RADIUS+2)
+        # --- przygotuj treść ---
+        title_font = label_font or self.mid
+        title_surf = title_font.render(RULE_BANNER_TITLE, True, ACCENT)
+        title_w, title_h = title_surf.get_size()
 
-        pygame.draw.rect(panel, RULE_PANEL_BG, panel.get_rect(), border_radius=RULE_PANEL_RADIUS)
-        pygame.draw.rect(panel, RULE_PANEL_BORDER, panel.get_rect(), width=RULE_PANEL_BORDER_W, border_radius=RULE_PANEL_RADIUS)
+        # wielkość ikon/strzałki wynikająca z rozdzielczości i symbol_scale
+        icon_size = int(self.w * RULE_ICON_SIZE_FACTOR * symbol_scale)
+        icon_gap  = int(self.w * RULE_ICON_GAP_FACTOR  * symbol_scale)
 
-        # --- ikony ---
-        icon_size = int(self.w * RULE_ICON_SIZE_FACTOR * panel_scale * symbol_scale)
-        gap = int(self.w * RULE_ICON_GAP_FACTOR * panel_scale * symbol_scale)
+        arrow_w = int(icon_size * 1.05)
+        arrow_h = int(icon_size * 0.55)
+        icon_line_h = max(icon_size, arrow_h)
+        icon_line_w = icon_size + icon_gap + arrow_w + icon_gap + icon_size
 
-        cx = panel_w // 2
-        cy = int(panel_h * 0.5 + panel_h * y_bias)
+        # --- wymiary panelu z treści (bez skali) ---
+        inner_w = max(title_w, icon_line_w)
+        inner_h = RULE_BANNER_VGAP + title_h + RULE_BANNER_VGAP + icon_line_h + RULE_BANNER_VGAP
 
+        panel_w_raw = inner_w + 2 * RULE_PANEL_PAD
+        panel_w_raw = max(panel_w_raw, int(self.w * RULE_BANNER_MIN_W_FACTOR))
+        panel_h_raw = inner_h + 2 * RULE_PANEL_PAD
+
+        # skala całego panelu
+        panel_w = max(1, int(panel_w_raw * panel_scale))
+        panel_h = max(1, int(panel_h_raw * panel_scale))
+
+        # robocza powierzchnia w surowej skali 1.0, rysujemy ostro, a na końcu skalujemy całość
+        panel_raw  = pygame.Surface((panel_w_raw, panel_h_raw), pygame.SRCALPHA)
+        shadow_raw = pygame.Surface((panel_w_raw, panel_h_raw), pygame.SRCALPHA)
+
+        pygame.draw.rect(shadow_raw, (0, 0, 0, 120), shadow_raw.get_rect(), border_radius=RULE_PANEL_RADIUS + 2)
+        pygame.draw.rect(panel_raw, RULE_PANEL_BG, panel_raw.get_rect(), border_radius=RULE_PANEL_RADIUS)
+        pygame.draw.rect(panel_raw, RULE_PANEL_BORDER, panel_raw.get_rect(),
+                        width=RULE_PANEL_BORDER_W, border_radius=RULE_PANEL_RADIUS)
+
+        # --- położenia (układ pionowy stały) ---
+        cx = panel_w_raw // 2
+        y  = RULE_PANEL_PAD + RULE_BANNER_VGAP
+
+        # tytuł
+        panel_raw.blit(title_surf, (cx - title_w // 2, y))
+        y += title_h + RULE_BANNER_VGAP
+
+        # linia ikon wyśrodkowana względem szerokości panelu
+        line_left = cx - icon_line_w // 2
+        cy = y + icon_line_h // 2
+
+        # prostokąty ikon i strzałki
         left_rect  = pygame.Rect(0, 0, icon_size, icon_size)
         right_rect = pygame.Rect(0, 0, icon_size, icon_size)
-        arrow_w = int(icon_size * 1.05); arrow_h = int(icon_size * 0.55)
-        arrow_rect = pygame.Rect(0, 0, arrow_w, arrow_h); arrow_rect.center = (cx, cy)
-        left_rect.center  = (cx - (arrow_rect.width // 2) - gap - icon_size // 2, cy)
-        right_rect.center = (cx + (arrow_rect.width // 2) + gap + icon_size // 2, cy)
+        arrow_rect = pygame.Rect(0, 0, arrow_w, arrow_h)
 
-        self.draw_symbol(panel, self.rule[0], left_rect)
-        self.draw_arrow(panel, arrow_rect)
-        self.draw_symbol(panel, self.rule[1], right_rect)
+        left_rect.center  = (line_left + icon_size // 2, cy)
+        arrow_rect.center = (line_left + icon_size + icon_gap + arrow_w // 2, cy)
+        right_rect.center = (line_left + icon_size + icon_gap + arrow_w + icon_gap + icon_size // 2, cy)
 
-        fnt = label_font or self.mid
-        label = fnt.render(f"RULE: {self.rule[0]} -> {self.rule[1]}", True, ACCENT)
-        panel.blit(label, ((panel_w - label.get_width()) // 2, max(8, cy - icon_size//2 - label.get_height() - RULE_BANNER_LABEL_GAP)))
+        # rysowanie symboli/strzałki
+        self.draw_symbol(panel_raw, self.rule[0], left_rect)
+        self.draw_arrow(panel_raw, arrow_rect)
+        self.draw_symbol(panel_raw, self.rule[1], right_rect)
+
+        # --- skalowanie gotowego panelu do panel_scale ---
+        panel = pygame.transform.smoothscale(panel_raw, (panel_w, panel_h))
+        shadow = pygame.transform.smoothscale(shadow_raw, (panel_w, panel_h))
         return panel, shadow
 
     def _draw_rule_banner_anim(self):
         now = self.now()
-        t = now - self.rule_banner_anim_start
-        if t < 0:
-            t = 0
-        if t > RULE_BANNER_TOTAL_SEC:
-            t = RULE_BANNER_TOTAL_SEC
+        t = max(0.0, min(RULE_BANNER_TOTAL_SEC, now - self.rule_banner_anim_start))
 
+        # faza + ułamek postępu p
         if t <= RULE_BANNER_IN_SEC:
-            # FAZA WJAZDU
+            phase = "in"
             p = self._ease_out_cubic(t / RULE_BANNER_IN_SEC)
-
-            if getattr(self, "rule_banner_from_pinned", False):
-                # start z doku -> środek
-                start_scale  = RULE_BANNER_PIN_SCALE
-                end_scale    = 1.0
-                start_sym    = RULE_SYMBOL_SCALE_PINNED
-                end_sym      = RULE_SYMBOL_SCALE_CENTER
-                start_bias   = RULE_SYMBOL_Y_OFFSET_PINNED
-                end_bias     = RULE_SYMBOL_Y_OFFSET_CENTER
-
-                panel_scale  = start_scale + (end_scale - start_scale) * p
-                symbol_scale = start_sym   + (end_sym   - start_sym)   * p
-                y_bias       = start_bias  + (end_bias  - start_bias)  * p
-
-                # UŻYJEMY FONTU "CENTER" PODCZAS CAŁEGO WJAZDU
-                panel, shadow = self._render_rule_panel_surface(
-                    panel_scale, symbol_scale, y_bias, label_font=self.rule_font_center
-                )
-                panel_w, panel_h = panel.get_size()
-
-                pinned_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
-                mid_y    = int(self.h * 0.30)
-                y = int(pinned_y + (mid_y - pinned_y) * p)
-
-            else:
-                # wjazd z góry do środka (bez pochodzenia z doku)
-                panel_scale = 1.0
-                symbol_scale = RULE_SYMBOL_SCALE_CENTER
-                y_bias = RULE_SYMBOL_Y_OFFSET_CENTER
-                panel, shadow = self._render_rule_panel_surface(
-                    panel_scale, symbol_scale, y_bias, label_font=self.rule_font_center
-                )
-                panel_w, panel_h = panel.get_size()
-                start_y = -panel_h
-                mid_y = int(self.h * 0.30)
-                y = int(start_y + (mid_y - start_y) * p)
-
         elif t <= RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC:
-            # FAZA HOLD – NA ŚRODKU
-            panel_scale = 1.0
-            symbol_scale = RULE_SYMBOL_SCALE_CENTER
-            y_bias = RULE_SYMBOL_Y_OFFSET_CENTER
-            panel, shadow = self._render_rule_panel_surface(
-                1.0, RULE_SYMBOL_SCALE_CENTER, 0.0, label_font=self.rule_font_center
-            )
-            panel_w, panel_h = panel.get_size()
-            y = int(self.h * 0.30)
-            # resetujemy flagę po dotarciu do środka
-            self.rule_banner_from_pinned = False
-
+            phase = "hold"
+            p = 1.0
         else:
-            # FAZA WYJAZDU DO GÓRY (DOKOWANIE)
-            tt = (t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_TO_TOP_SEC)
-            p = self._ease_out_cubic(tt)
-
-            panel_scale  = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * p
-            symbol_scale = (RULE_SYMBOL_SCALE_CENTER
-                            + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * p)
-            y_bias       = (RULE_SYMBOL_Y_OFFSET_CENTER
-                            + (RULE_SYMBOL_Y_OFFSET_PINNED - RULE_SYMBOL_Y_OFFSET_CENTER) * p)
-
-            # TU JUŻ UŻYWAMY FONTU "PINNED"
-            panel, shadow = self._render_rule_panel_surface(
-                panel_scale, symbol_scale, y_bias, label_font=self.rule_font_pinned
+            phase = "out"
+            p = self._ease_out_cubic(
+                (t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_TO_TOP_SEC)
             )
-            panel_w, panel_h = panel.get_size()
 
-            mid_y    = int(self.h * 0.30)
-            pinned_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
-            y = int(mid_y + (pinned_y - mid_y) * p)
+        # docelowe Y (środek) i dok (pod topbarem)
+        mid_y    = int(self.h * 0.30)
+        pinned_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
 
+        if phase == "in" and getattr(self, "rule_banner_from_pinned", False):
+            # z doku do środka
+            panel_scale  = RULE_BANNER_PIN_SCALE + (1.0 - RULE_BANNER_PIN_SCALE) * p
+            symbol_scale = RULE_SYMBOL_SCALE_PINNED + (RULE_SYMBOL_SCALE_CENTER - RULE_SYMBOL_SCALE_PINNED) * p
+            y            = int(pinned_y + (mid_y - pinned_y) * p)
+            font         = self.rule_font_center
+        elif phase == "in":
+            # z góry do środka (wjeżdża spoza ekranu)
+            panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
+            start_y = -int(self.h * 0.35)
+            y = int(start_y + (mid_y - start_y) * p)
+        elif phase == "hold":
+            panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
+            y = mid_y
+            self.rule_banner_from_pinned = False
+        else:
+            # do doku (pin)
+            panel_scale  = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * p
+            symbol_scale = RULE_SYMBOL_SCALE_CENTER + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * p
+            y            = int(mid_y + (pinned_y - mid_y) * p)
+            font         = self.rule_font_pinned
+
+        panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, label_font=font)
+        panel_w, panel_h = panel.get_size()
         panel_x = (self.w - panel_w) // 2
+
         self.screen.blit(shadow, (panel_x + 3, y + 5))
-        self.screen.blit(panel, (panel_x, y))
+        self.screen.blit(panel,  (panel_x,     y))
 
     def _draw_rule_banner_pinned(self):
         if not self.rule:
             return
         panel_scale  = RULE_BANNER_PIN_SCALE
         symbol_scale = RULE_SYMBOL_SCALE_PINNED
-        y_bias       = RULE_SYMBOL_Y_OFFSET_PINNED
 
-        # ZAWSZE FONT "PINNED" W DOKU
-        panel, shadow = self._render_rule_panel_surface(
-            panel_scale, symbol_scale, y_bias, label_font=self.rule_font_pinned
-        )
+        panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, label_font=self.rule_font_pinned)
         panel_w, panel_h = panel.get_size()
         panel_x = (self.w - panel_w) // 2
 
-        # dock tuż pod górnym HUDem (fallback, gdy brak zapisanego wymiaru)
         panel_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
-
         self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
-        self.screen.blit(panel, (panel_x, panel_y))
+        self.screen.blit(panel,  (panel_x,     panel_y))
 
     def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect):
         age   = self.now() - self.symbol_spawn_time
