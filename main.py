@@ -206,17 +206,17 @@ class InputQueue:
         self._q.clear()
         return out
 
-
 # ========= CONSTANTS =========
+# Kolory bazowe UI / tła
+BG = (8, 10, 12)                 # kolor tła sceny, gdy brak obrazka bg
+PAD = (40, 44, 52)               # kolor płytek/paneli neutralnych (nieużywane teraz – zostawione na przyszłość)
+PAD_HI = (90, 200, 255)          # kolor podświetlenia płytek/paneli
+PAD_GOOD = (60, 200, 120)        # kolor akcji poprawnej
+PAD_BAD = (220, 80, 80)          # kolor akcji błędnej
+INK = (235, 235, 235)            # podstawowy kolor tekstu
+ACCENT = (255, 210, 90)          # akcent (nagłówki, ważne etykiety)
 
-BG = (8, 10, 12)  # scene background
-PAD = (40, 44, 52)
-PAD_HI = (90, 200, 255)
-PAD_GOOD = (60, 200, 120)
-PAD_BAD = (220, 80, 80)
-INK = (235, 235, 235)
-ACCENT = (255, 210, 90)
-
+# Kolory wektorowych symboli, jeśli brak tekstur PNG
 SYMBOL_COLORS = {
     "TRIANGLE": (0, 255, 0),
     "CIRCLE": (255, 0, 0),
@@ -224,171 +224,178 @@ SYMBOL_COLORS = {
     "SQUARE": (255, 215, 0),
 }
 
-PADDING = 0.06
-GAP = 0.04
-FPS = CFG["display"]["fps"]
+# Ogólne odstępy/układ
+PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
+GAP = 0.04                       # przerwa między obiektami w siatce
+FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
 
-# --- Levels ---
-LEVEL_GOAL_PER_LEVEL = 10
-LEVEL_MAX = 5
-LEVELS_ACTIVE_FOR_NOW = 2
+# --- Levels --- (progresja poziomów)
+LEVEL_GOAL_PER_LEVEL = 10        # ile trafień, by wskoczyć na kolejny poziom
+LEVEL_MAX = 5                    # maks. zdefiniowany poziom (na przyszłość)
+LEVELS_ACTIVE_FOR_NOW = 2        # faktycznie używana liczba poziomów
 
-LEVEL_COLORS = {
+LEVEL_COLORS = {                 # kolor wyniku (kapsuła) per poziom
     1: (235, 235, 235),
     2: (60, 200, 120),
 }
 
-TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]
-TARGET_TIME_MIN = CFG["speedup"]["target_time_min"]
-TARGET_TIME_STEP = CFG["speedup"]["target_time_step"]
-TIMED_DURATION = CFG["timed"]["duration"]
-RULE_EVERY_HITS = CFG["rules"]["every_hits"]
-RULE_BANNER_SEC = CFG["rules"]["banner_sec"]
-MAX_LIVES = CFG["lives"]
-ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))
+# Tempo gry i tryby
+TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]  # startowy czas na reakcję (tryb SPEEDUP)
+TARGET_TIME_MIN = CFG["speedup"]["target_time_min"]          # dolne ograniczenie czasu reakcji
+TARGET_TIME_STEP = CFG["speedup"]["target_time_step"]        # zmiana czasu po każdym trafieniu
+TIMED_DURATION = CFG["timed"]["duration"]                    # czas całej rundy w trybie TIMED
+RULE_EVERY_HITS = CFG["rules"]["every_hits"]                 # co ile trafień losujemy nową regułę (poziom 2+)
+RULE_BANNER_SEC = CFG["rules"]["banner_sec"]                 # (pozostawione dla kompatybilności)
+MAX_LIVES = CFG["lives"]                                     # liczba żyć w SPEEDUP (jeśli >0)
+ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))  # bonus sekund po wylosowaniu reguły (TIMED)
 
-SYMBOL_BASE_SIZE_FACTOR = 0.26
-SYMBOL_ANIM_TIME = 0.30
-SYMBOL_ANIM_START_SCALE = 0.20
-SYMBOL_ANIM_OFFSET_Y = 0.08
+# Rozmiar i animacja symbolu celu
+SYMBOL_BASE_SIZE_FACTOR = 0.26    # bazowy rozmiar symbolu (proporcja szerokości okna)
+SYMBOL_ANIM_TIME = 0.30           # czas dojścia animacji skali/pozycji do 100%
+SYMBOL_ANIM_START_SCALE = 0.20    # początkowa skala podczas spawn
+SYMBOL_ANIM_OFFSET_Y = 0.08       # startowe przesunięcie w dół (proporcja wysokości)
 
-SHAKE_DURATION = 0.12
-SHAKE_AMPLITUDE_FACT = 0.012
-SHAKE_FREQ_HZ = 18.0
+# Efekt potrząśnięcia (shake) kamery
+SHAKE_DURATION = 0.12             # długość wstrząsu
+SHAKE_AMPLITUDE_FACT = 0.012      # amplituda (proporcja szerokości okna)
+SHAKE_FREQ_HZ = 18.0              # częstotliwość drgań
 
+# Ogólne zaokrąglenie rogów UI
 UI_RADIUS = 8
 
-SYMBOL_DRAW_THICKNESS = 20
-SYMBOL_SQUARE_RADIUS = UI_RADIUS
-SYMBOL_CIRCLE_RADIUS_FACTOR = 0.32
-SYMBOL_TRIANGLE_POINT_FACTOR = 0.9
-SYMBOL_CROSS_K_FACTOR = 1.0
+# Parametry rysowania symboli wektorowych (fallback)
+SYMBOL_DRAW_THICKNESS = 20        # grubość linii
+SYMBOL_SQUARE_RADIUS = UI_RADIUS  # promień zaokrąglenia kwadratu
+SYMBOL_CIRCLE_RADIUS_FACTOR = 0.32        # promień koła względem mniejszego boku recta
+SYMBOL_TRIANGLE_POINT_FACTOR = 0.9        # „ostrość” trójkąta
+SYMBOL_CROSS_K_FACTOR = 1.0               # długość ramion krzyżyka (krotność promienia)
 
-HUD_TOP_MARGIN_FACTOR = 0.02
-HUD_SEPARATOR = "   ·   "
+# HUD (górny pasek)
+HUD_TOP_MARGIN_FACTOR = 0.02      # dodatkowy margines pod topbarem (dokowanie banera reguł)
+HUD_SEPARATOR = "   ·   "         # separator tekstowy
 
-# --- Glitch ---
-GLITCH_DURATION = 0.20
-GLITCH_PIXEL_FACTOR_MAX = 0.10
-GLITCH_FREQ_HZ = 60.0
+# --- Glitch --- (efekt post-process)
+GLITCH_DURATION = 0.20            # długość pojedynczego glitcha
+GLITCH_PIXEL_FACTOR_MAX = 0.10    # maks. pikselizacja (skala downsample)
+GLITCH_FREQ_HZ = 60.0             # tempo migotania/glitchowania pasów
 
-# --- Text Glitch ---
-TEXT_GLITCH_DURATION = 0.5
-TEXT_GLITCH_MIN_GAP = 1
-TEXT_GLITCH_MAX_GAP = 5.0
-TEXT_GLITCH_CHAR_PROB = 0.01
-TEXT_GLITCH_CHARSET = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"
+# --- Text Glitch --- (zakłócenia napisów)
+TEXT_GLITCH_DURATION = 0.5        # jak długo trwa glitch tekstu
+TEXT_GLITCH_MIN_GAP = 1           # min przerwa między glitchami
+TEXT_GLITCH_MAX_GAP = 5.0         # max przerwa między glitchami
+TEXT_GLITCH_CHAR_PROB = 0.01      # prawdopodobieństwo podmiany znaku
+TEXT_GLITCH_CHARSET = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"  # z jakich znaków mieszamy
 
-# --- Spawn anim ---
-SYMBOL_SPAWN_ANIM_DURATION = 0.40
-SYMBOL_SPAWN_GLITCH_DURATION = 0.02
-SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20
-SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15
+# --- Spawn anim --- (dodatkowe efekty przy pojawieniu symbolu)
+SYMBOL_SPAWN_ANIM_DURATION = 0.40       # łączny czas animacji „pojawienia”
+SYMBOL_SPAWN_GLITCH_DURATION = 0.02     # krótki glitch przy spawnie
+SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20        # maks. intensywność poświaty
+SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15  # promień poświaty względem symbolu
 
-# --- Timer bar (bottom) ---
-TIMER_BAR_WIDTH_FACTOR = 0.60
-TIMER_BAR_HEIGHT = 18
-TIMER_BAR_MARGIN_TOP = 10
-TIMER_BAR_BG = (40, 40, 50)
-TIMER_BAR_FILL = (90, 200, 255)
-TIMER_BAR_BORDER = (160, 180, 200)
-TIMER_BAR_BORDER_W = 2
-TIMER_BAR_WARN_COLOR = (255, 170, 80)
-TIMER_BAR_CRIT_COLOR = (220, 80, 80)
-TIMER_BAR_WARN_TIME = 0.50
-TIMER_BAR_CRIT_TIME = 0.25
-TIMER_BAR_BORDER_RADIUS = UI_RADIUS
-TIMER_BOTTOM_MARGIN_FACTOR = 0.03
-TIMER_BAR_TEXT_COLOR = INK
-TIMER_FONT_SIZE = 48
-TIMER_POSITION_INDICATOR_W = 4
-TIMER_POSITION_INDICATOR_PAD = 3
-TIMER_LABEL_GAP = 8
+# --- Timer bar (bottom) --- (pasek czasu na dole ekranu)
+TIMER_BAR_WIDTH_FACTOR = 0.60     # szerokość paska względem szerokości okna
+TIMER_BAR_HEIGHT = 18             # wysokość paska w px
+TIMER_BAR_MARGIN_TOP = 10         # wewnętrzny margines (niewykorzystywany – zachowany)
+TIMER_BAR_BG = (40, 40, 50)       # kolor tła paska
+TIMER_BAR_FILL = (90, 200, 255)   # kolor wypełnienia (normalny)
+TIMER_BAR_BORDER = (160, 180, 200)# kolor ramki
+TIMER_BAR_BORDER_W = 2            # grubość ramki
+TIMER_BAR_WARN_COLOR = (255, 170, 80)  # kolor ostrzegawczy (mało czasu)
+TIMER_BAR_CRIT_COLOR = (220, 80, 80)   # kolor krytyczny (bardzo mało czasu)
+TIMER_BAR_WARN_TIME = 0.50        # próg ostrzegawczy (ułamek 0–1)
+TIMER_BAR_CRIT_TIME = 0.25        # próg krytyczny (ułamek 0–1)
+TIMER_BAR_BORDER_RADIUS = UI_RADIUS     # zaokrąglenie rogów paska
+TIMER_BOTTOM_MARGIN_FACTOR = 0.03 # odległość paska od dołu ekranu (proporcja wys.)
+TIMER_BAR_TEXT_COLOR = INK        # kolor tekstu nad paskiem
+TIMER_FONT_SIZE = 48              # bazowy rozmiar czcionki timera (skaluje się w kodzie)
+TIMER_POSITION_INDICATOR_W = 4    # szerokość pionowego markera pozycji
+TIMER_POSITION_INDICATOR_PAD = 3  # pionowe „wystawanie” markera poza pasek
+TIMER_LABEL_GAP = 8               # odstęp tekstu od paska
 
-# --- Rule banner ---
-RULE_BANNER_IN_SEC = 0.35
-RULE_BANNER_HOLD_SEC = 2.0
-RULE_BANNER_TO_TOP_SEC = 0.35
+# --- Rule banner --- (baner z nową regułą)
+RULE_BANNER_IN_SEC = 0.35         # czas wejścia banera (z góry)
+RULE_BANNER_HOLD_SEC = 2.0        # czas utrzymania w centrum
+RULE_BANNER_TO_TOP_SEC = 0.35     # czas wyjścia/dokowania do topu
 RULE_BANNER_TOTAL_SEC = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_TO_TOP_SEC
-RULE_PANEL_BG = (22, 26, 34, 110)
-RULE_PANEL_BORDER = (120, 200, 255)
-RULE_PANEL_BORDER_W = 3
-RULE_PANEL_RADIUS = 30
-RULE_ICON_SIZE_FACTOR = 0.1
-RULE_ICON_GAP_FACTOR = 0.04
-RULE_ARROW_W = 6
-RULE_ARROW_COLOR = (200, 220, 255)
-RULE_PANEL_PAD = 16
-RULE_BANNER_VGAP = 8
-RULE_BANNER_TITLE = "NEW RULE:"
-RULE_BANNER_PIN_SCALE = 0.50
-RULE_SYMBOL_SCALE_CENTER = 1.00
-RULE_SYMBOL_SCALE_PINNED = 0.70
-RULE_BANNER_MIN_W_FACTOR = 0.80
+RULE_PANEL_BG = (22, 26, 34, 110) # tło panelu banera (z alpha)
+RULE_PANEL_BORDER = (120, 200, 255)     # obrys panelu
+RULE_PANEL_BORDER_W = 3           # grubość obrysu
+RULE_PANEL_RADIUS = 30            # promień rogów panelu
+RULE_ICON_SIZE_FACTOR = 0.1       # rozmiar symboli w banerze (proporcja szerokości ekranu)
+RULE_ICON_GAP_FACTOR = 0.04       # odstęp między symbolami/strzałką
+RULE_ARROW_W = 6                  # grubość strzałki (wektor fallback)
+RULE_ARROW_COLOR = (200, 220, 255)# kolor strzałki (fallback)
+RULE_PANEL_PAD = 16               # wewnętrzny padding panelu
+RULE_BANNER_VGAP = 8              # pionowe odstępy tytuł/ikony
+RULE_BANNER_TITLE = "NEW RULE:"   # tekst tytułu banera
+RULE_BANNER_PIN_SCALE = 0.50      # skala panelu po „zadokowaniu” u góry
+RULE_SYMBOL_SCALE_CENTER = 1.00   # skala symboli w centrum
+RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
+RULE_BANNER_MIN_W_FACTOR = 0.80   # minimalna szerokość panelu względem ekranu
 
-# --- Screens ---
-MENU_TITLE_Y_FACTOR = 0.28
-MENU_MODE_GAP = 20
-MENU_HINT_GAP = 48
-MENU_HINT2_EXTRA_GAP = 12
-OVER_TITLE_OFFSET_Y = -60
-OVER_SCORE_GAP1 = -10
-OVER_SCORE_GAP2 = 26
-OVER_INFO_GAP = 60
-SETTINGS_TITLE_Y_FACTOR = 0.10
-SETTINGS_LIST_Y_START_FACTOR = 0.25
-SETTINGS_ITEM_SPACING = 3
-SETTINGS_HELP_MARGIN_TOP = 18
-SETTINGS_HELP_GAP = 6
-SETTINGS_CENTER_GAP = 12
+# --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
+MENU_TITLE_Y_FACTOR = 0.28        # pionowe położenie tytułu w MENU (proporcja wys.)
+MENU_MODE_GAP = 20                # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
+MENU_HINT_GAP = 48                # odstęp do pierwszej podpowiedzi
+MENU_HINT2_EXTRA_GAP = 12         # dodatkowy odstęp do drugiej podpowiedzi
+OVER_TITLE_OFFSET_Y = -60         # przesunięcie tytułu „GAME OVER”
+OVER_SCORE_GAP1 = -10             # przesunięcie pierwszej linii wyniku
+OVER_SCORE_GAP2 = 26              # przesunięcie drugiej linii wyniku
+OVER_INFO_GAP = 60                # odstęp do linii z instrukcją
+SETTINGS_TITLE_Y_FACTOR = 0.10    # pionowe położenie tytułu „Settings”
+SETTINGS_LIST_Y_START_FACTOR = 0.25  # start Y listy opcji
+SETTINGS_ITEM_SPACING = 3         # odstęp między wierszami listy
+SETTINGS_HELP_MARGIN_TOP = 18     # margines nad helpem na dole
+SETTINGS_HELP_GAP = 6             # odstęp między wierszami helpu
+SETTINGS_CENTER_GAP = 12          # odstęp między etykietą a wartością w wierszu
 
-# --- Top Header & Score Capsule ---
-TOPBAR_HEIGHT_FACTOR = 0.1
-TOPBAR_PAD_X_FACTOR = 0.045
-TOPBAR_UNDERLINE_THICKNESS = 4
-TOPBAR_UNDERLINE_COLOR = (90, 200, 255)
+# --- Top Header & Score Capsule --- (górny HUD)
+TOPBAR_HEIGHT_FACTOR = 0.1        # wysokość topbara (proporcja wys. okna)
+TOPBAR_PAD_X_FACTOR = 0.045       # poziomy padding lewej/prawej sekcji
+TOPBAR_UNDERLINE_THICKNESS = 4    # grubość linii pod topbarem
+TOPBAR_UNDERLINE_COLOR = (90, 200, 255)  # kolor linii
 
-SCORE_CAPSULE_WIDTH_FACTOR = 0.42
-SCORE_CAPSULE_HEIGHT_FACTOR = 0.15
-SCORE_CAPSULE_BORDER_COLOR = (120, 200, 255, 220)
-SCORE_CAPSULE_BG = (22, 26, 34, 170)
-SCORE_CAPSULE_RADIUS = 26
-SCORE_CAPSULE_SHADOW = (0, 0, 0, 140)
-SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)
-SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15
+SCORE_CAPSULE_WIDTH_FACTOR = 0.42 # szerokość kapsuły wyniku (proporcja szer.)
+SCORE_CAPSULE_HEIGHT_FACTOR = 0.15# wysokość kapsuły (proporcja wys.)
+SCORE_CAPSULE_BORDER_COLOR = (120, 200, 255, 220)  # obrys kapsuły
+SCORE_CAPSULE_BG = (22, 26, 34, 170)               # tło kapsuły (z alpha)
+SCORE_CAPSULE_RADIUS = 26          # promień rogów kapsuły
+SCORE_CAPSULE_SHADOW = (0, 0, 0, 140)              # cień kapsuły
+SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)               # offset cienia
+SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                # minimalny „dodatkowy” wzrost wysokości
 
-# Typography
+# Typography (rozmiary bazowe; w kodzie są skalowane do okna)
 FONT_PATH = "assets/font/Orbitron-VariableFont_wght.ttf"
-FONT_SIZE_SMALL = 24
-FONT_SIZE_MID = 48
-FONT_SIZE_BIG = 80
+FONT_SIZE_SMALL = 18
+FONT_SIZE_MID = 24
+FONT_SIZE_BIG = 60
 FONT_SIZE_SETTINGS = 26
 HUD_LABEL_FONT_SIZE = 22
 HUD_VALUE_FONT_SIZE = 40
 SCORE_LABEL_FONT_SIZE = 26
 SCORE_VALUE_FONT_SIZE = 64
-HUD_LABEL_COLOR = (180, 200, 230)
-HUD_VALUE_COLOR = INK
-SCORE_LABEL_COLOR = ACCENT
-SCORE_VALUE_COLOR = INK
+HUD_LABEL_COLOR = (180, 200, 230)   # kolor etykiet HUD
+HUD_VALUE_COLOR = INK               # kolor wartości HUD
+SCORE_LABEL_COLOR = ACCENT          # kolor napisu „SCORE”
+SCORE_VALUE_COLOR = INK             # kolor liczby punktów
 
-# --- Aspect ---
-ASPECT_RATIO = (9, 16)
-ASPECT_SNAP_MIN_SIZE = (360, 640)
-ASPECT_SNAP_TOLERANCE = 0.0
+# --- Aspect --- (utrzymanie 9:16 w trybie okienkowym)
+ASPECT_RATIO = (9, 16)             # docelowe proporcje (portret)
+ASPECT_SNAP_MIN_SIZE = (360, 640)  # minimalny rozmiar okna po „snapie”
+ASPECT_SNAP_TOLERANCE = 0.0        # tolerancja (0 = zawsze wymuszaj idealne 9:16)
 
 # --- Audio ---
-MUSIC_FADEOUT_MS = 800
+MUSIC_FADEOUT_MS = 800             # czas wyciszenia muzyki przy końcu gry
 
-# --- Window ---
-WINDOWED_DEFAULT_SIZE = tuple(CFG.get("display", {}).get("windowed_size", (720, 1280)))
-WINDOWED_FLAGS = pygame.RESIZABLE
+# --- Window --- (ustawienia okna)
+WINDOWED_DEFAULT_SIZE = tuple(CFG.get("display", {}).get("windowed_size", (720, 1280)))  # domyślne 9:16
+WINDOWED_FLAGS = pygame.RESIZABLE  # okno z paskiem tytułu i możliwością zmiany rozmiaru
 
-# --- GPIO ---
-GPIO_PULL_UP = True
-GPIO_BOUNCE_TIME = 0.05
+# --- GPIO --- (przyciski sprzętowe – Raspberry Pi itd.)
+GPIO_PULL_UP = True                # konfiguracja wejść (pull-up)
+GPIO_BOUNCE_TIME = 0.05            # debounce w sekundach
 
-# --- Keymap ---
+# --- Keymap --- (mapowanie klawiszy na symbole gry)
 KEYMAP: Dict[int, str] = {
     pygame.K_UP: "TRIANGLE",
     pygame.K_RIGHT: "CIRCLE",
