@@ -6,21 +6,21 @@
     "TRIANGLE": 23
   },
   "display": {
-    "fullscreen": true,
+    "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      592,
-      1052
+      609,
+      1083
     ]
   },
   "speedup": {
     "target_time_initial": 3.0,
-    "target_time_min": 0.5,
-    "target_time_step": -0.05
+    "target_time_min": 0.45,
+    "target_time_step": -0.03
   },
   "timed": {
     "duration": 60.0,
-    "rule_bonus": 3.0
+    "rule_bonus": 5.0
   },
   "rules": {
     "every_hits": 10,
@@ -31,13 +31,18 @@
   "lives": 3,
   "audio": {
     "music": "assets/music.ogg",
-    "images": {
-      "background": "assets/images/bg.png"
-    },
     "volume": 0.5
   },
-  "highscore": 79,
   "effects": {
     "glitch_enabled": true
-  }
+  },
+  "images": {
+    "background": "assets/images/bg.png",
+    "symbol_circle": "assets/images/circle.png",
+    "symbol_cross": "assets/images/cross.png",
+    "symbol_square": "assets/images/square.png",
+    "symbol_triangle": "assets/images/triangle.png",
+    "arrow": "assets/images/arrow.png"
+  },
+  "highscore": 0
 }
