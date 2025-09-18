@@ -20,7 +20,7 @@
   },
   "timed": {
     "duration": 60.0,
-    "rule_bonus": 5.0
+    "rule_bonus": 3.0
   },
   "rules": {
     "every_hits": 10,

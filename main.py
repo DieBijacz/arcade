@@ -66,7 +66,7 @@ def _sanitize_cfg(cfg: dict) -> dict:
     s["target_time_initial"] = float(max(0.2, min(10.0, s["target_time_initial"])) )
     s["target_time_min"]     = float(max(0.1, min(s["target_time_initial"], s["target_time_min"])) )
     s["target_time_step"]    = float(max(-1.0, min(1.0, s["target_time_step"])) )
-    cfg["lives"]             = int(max(1, min(9, cfg["lives"])))
+    cfg["lives"]             = int(max(0, min(9, cfg["lives"])))
     cfg["audio"]["volume"]   = float(max(0.0, min(1.0, cfg["audio"]["volume"])))
     if "fps" in cfg["display"]:
         cfg["display"]["fps"] = int(max(30, min(240, cfg["display"]["fps"])))
@@ -168,6 +168,18 @@ PADDING = 0.06                 # marginesy sceny względem szer./wys. ekranu
 GAP     = 0.04                 # przerwa między „padami”/panelami
 FPS     = CFG["display"]["fps"]  # docelowa liczba klatek
 
+# --- Levels ---
+LEVEL_GOAL_PER_LEVEL  = 10     # ile symboli trzeba zebrać na poziom (na start 10)
+LEVEL_MAX             = 5      # docelowo 5 poziomów
+LEVELS_ACTIVE_FOR_NOW = 2      # na razie używamy tylko 1 i 2
+
+# Kolor przewodni poziomu -> wpływa na kolor cyfr SCORE (etykieta zostaje bez zmian)
+LEVEL_COLORS = {
+    1: (235, 235, 235),  # biały
+    2: (60, 200, 120),   # zielony
+    # 3..5 dodamy później
+}
+
 TARGET_TIME_INITIAL   = CFG["speedup"]["target_time_initial"]  # początkowy limit czasu na trafienie (Speed-Up)
 TARGET_TIME_MIN       = CFG["speedup"]["target_time_min"]      # minimalny limit czasu (nie schodzi niżej)
 TARGET_TIME_STEP      = CFG["speedup"]["target_time_step"]     # zmiana limitu czasu po każdej poprawnej akcji
@@ -265,11 +277,12 @@ OVER_TITLE_OFFSET_Y   = -60   # przesunięcie „GAME OVER” w pionie
 OVER_SCORE_GAP1       = -10   # odstęp dla napisu „Score”
 OVER_SCORE_GAP2       = 26    # odstęp dla napisu „Best”
 OVER_INFO_GAP         = 60    # odstęp dla info o sterowaniu
-SETTINGS_TITLE_Y_FACTOR       = 0.18 # pozycja tytułu Settings
-SETTINGS_LIST_Y_START_FACTOR  = 0.26 # start listy opcji w Settings
-SETTINGS_ITEM_SPACING         = 14   # pionowy odstęp między pozycjami
+SETTINGS_TITLE_Y_FACTOR       = 0.10 # pozycja tytułu Settings
+SETTINGS_LIST_Y_START_FACTOR  = 0.25 # start listy opcji w Settings
+SETTINGS_ITEM_SPACING         = 3   # pionowy odstęp między pozycjami
 SETTINGS_HELP_MARGIN_TOP      = 18   # margines nad helpem
 SETTINGS_HELP_GAP             = 6    # odstęp między liniami helpa
+SETTINGS_CENTER_GAP = 12            # odstęp elementow ustawien od centralnej lini. settings | value
 
 # --- Top Header & Score Capsule (layout + typography) ---
 TOPBAR_HEIGHT_FACTOR          = 0.1   # height of the top header vs screen height
@@ -309,6 +322,11 @@ FONT_PATH        = "assets/font/Orbitron-VariableFont_wght.ttf"  # ścieżka do 
 FONT_SIZE_SMALL  = 24   # mała czcionka UI
 FONT_SIZE_MID    = 48   # średnia czcionka (np. Score w HUD)
 FONT_SIZE_BIG    = 80   # duża czcionka (tytuły)
+FONT_SIZE_SETTINGS = 26
+HUD_LABEL_FONT_SIZE  = 22
+HUD_VALUE_FONT_SIZE  = 40
+SCORE_LABEL_FONT_SIZE = 26
+SCORE_VALUE_FONT_SIZE = 64
 
 # --- Audio ---
 MUSIC_FADEOUT_MS = 800  # czas wyciszania muzyki przy końcu gry (ms)
@@ -386,6 +404,11 @@ class Game:
         self.hud_value_font  = pygame.font.Font(FONT_PATH, HUD_VALUE_FONT_SIZE)
         self.score_label_font = pygame.font.Font(FONT_PATH, SCORE_LABEL_FONT_SIZE)
         self.score_value_font = pygame.font.Font(FONT_PATH, SCORE_VALUE_FONT_SIZE)
+        self.settings_font = pygame.font.Font(FONT_PATH, FONT_SIZE_SETTINGS)
+        self.hud_label_font = pygame.font.Font(FONT_PATH, HUD_LABEL_FONT_SIZE)
+        self.hud_value_font = pygame.font.Font(FONT_PATH, HUD_VALUE_FONT_SIZE)
+        self.score_label_font = pygame.font.Font(FONT_PATH, SCORE_LABEL_FONT_SIZE)
+        self.score_value_font = pygame.font.Font(FONT_PATH, SCORE_VALUE_FONT_SIZE)
 
         self.rule_font_center = None  
         self.rule_font_pinned = None  
@@ -401,17 +424,25 @@ class Game:
         self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
 
         # gameplay state
+        self.level = 1
+        self.hits_in_level = 0
+        self.level_goal = LEVEL_GOAL_PER_LEVEL
+        self.levels_active = LEVELS_ACTIVE_FOR_NOW
+
         self.score = 0
         self.lives = MAX_LIVES
         self.streak = 0
+
         self.target: Optional[str] = None
         self.target_deadline: Optional[float] = None
         self.target_time = TARGET_TIME_INITIAL
         self.hits_since_rule = 0
+
         self.rule: Optional[Tuple[str,str]] = None
         self.rule_banner_from_pinned = False
         self.rule_banner_until = 0.0
         self.rule_banner_anim_start = 0.0
+
         self.pause_start = 0.0
         self.pause_until = 0.0
         self.shake_start = 0.0
@@ -616,6 +647,9 @@ class Game:
             else:
                 out_chars.append(ch)
         return "".join(out_chars)
+    
+    def lives_enabled(self) -> bool:
+        return int(self.settings.get("lives", MAX_LIVES)) > 0
 
     def _load_background(self):
         path = CFG.get("images", {}).get("background") if isinstance(CFG.get("images"), dict) else None
@@ -713,7 +747,7 @@ class Game:
         s["target_time_initial"] = max(0.2, min(10.0, float(s["target_time_initial"])))
         s["target_time_min"]     = max(0.1, min(float(s["target_time_initial"]), float(s["target_time_min"])) )
         s["target_time_step"]    = max(-1.0, min(1.0, float(s["target_time_step"])))
-        s["lives"]               = max(1, min(9, int(s["lives"])))
+        s["lives"]               = max(0, min(9, int(s["lives"])))
         s["volume"]              = max(0.0, min(1.0, float(s["volume"])))
         s["timed_rule_bonus"]    = max(0.0, min(30.0, float(s["timed_rule_bonus"])))
         s["rule_font_center"] = max(8, min(200, int(s["rule_font_center"])))
@@ -847,6 +881,9 @@ class Game:
 
     # ----- gameplay flow -----
     def reset_game_state(self):
+        self.level = 1
+        self.hits_in_level = 0
+        self.level_goal = LEVEL_GOAL_PER_LEVEL
         self.score = 0
         self.streak = 0
         self.lives = int(self.settings.get("lives", MAX_LIVES))
@@ -887,6 +924,21 @@ class Game:
         self.target = random.choice(choices)
         self.target_deadline = self.now() + self.target_time if self.mode is Mode.SPEEDUP else None
         self.symbol_spawn_time = self.now()
+    
+    def level_value_color(self) -> Tuple[int, int, int]:
+        # kolor cyfr SCORE dla aktualnego poziomu
+        return LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR)
+
+    def level_up(self):
+        # przejście na kolejny poziom (na razie obsługujemy 1 -> 2)
+        if self.level < self.levels_active:
+            self.level += 1
+            self.hits_in_level = 0
+            self.hits_since_rule = 0  # czyścimy licznik reguł
+
+            # Poziom 2 zaczyna się „od NEW RULE”
+            if self.level == 2:
+                self.roll_rule()
 
     def roll_rule(self):
         was_pinned = (self.rule is not None and self.now() >= self.rule_banner_until)
@@ -912,23 +964,34 @@ class Game:
     def handle_input_symbol(self, name: str):
         if self.scene is not Scene.GAME or not self.target:
             return
+        
         required = self.apply_rule(self.target)
+
         if name == required:
             self.score += 1
             self.streak += 1
             self.hits_since_rule += 1
+            self.hits_in_level += 1
             if self.mode is Mode.TIMED:
                 self.time_left += 1.0
             if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
-            if self.hits_since_rule >= RULE_EVERY_HITS:
+
+            # reguły dopiero od poziomu 2
+            if self.level >= 2 and self.hits_since_rule >= RULE_EVERY_HITS:
                 self.hits_since_rule = 0
                 self.roll_rule()
+
+            # awans poziomu po X trafieniach
+            if self.hits_in_level >= self.level_goal:
+                self.level_up()
+
             self.new_target()
             self.lock_until_all_released = True
             self.accept_after = self.now() + 0.12
+
         else:
             self.streak = 0
             self.trigger_shake()
@@ -938,7 +1001,7 @@ class Game:
                 if self.time_left <= 0.0:
                     self.time_left = 0.0
                     self.end_game()
-            if self.mode is Mode.SPEEDUP:
+            if self.mode is Mode.SPEEDUP and self.lives_enabled():
                 self.lives -= 1
                 if self.lives <= 0:
                     self.end_game()
@@ -972,7 +1035,7 @@ class Game:
                 return
         if (self.mode is Mode.SPEEDUP and self.target is not None and
             self.target_deadline is not None and now > self.target_deadline):
-            self.lives -= 1
+            if self.lives_enabled(): self.lives -= 1
             self.streak = 0
             self.trigger_glitch()
             if self.lives <= 0:
@@ -1197,6 +1260,46 @@ class Game:
         # subtle shadow for readability
         self.screen.blit(label_surf, (lx + 1, y + 1))
         self.screen.blit(value_surf, (vx + 2, y + label_surf.get_height() + 3))
+    def _draw_settings_row(self, *, label: str, value: str, y: float, selected: bool):
+        font = self.settings_font
+        axis_x = self.w // 2
+        gap = SETTINGS_CENTER_GAP
+
+        col_label = ACCENT if selected else INK
+        col_value = ACCENT if selected else INK
+
+        # Render
+        label_surf = font.render(label, True, col_label)
+        value_surf = font.render(value, True, col_value)
+
+        lh = label_surf.get_height()
+        vh = value_surf.get_height()
+        row_h = max(lh, vh)
+
+        label_x = axis_x - gap - label_surf.get_width()
+        label_y = y + (row_h - lh) / 2
+
+        value_x = axis_x + gap
+        value_y = y + (row_h - vh) / 2
+
+        # Cień + tekst (spójnie z draw_text)
+        shadow = (0, 0, 0)
+        self.screen.blit(self._shadow_text(label_surf), (label_x + 2, label_y + 2))
+        self.screen.blit(label_surf, (label_x, label_y))
+
+        self.screen.blit(self._shadow_text(value_surf), (value_x + 2, value_y + 2))
+        self.screen.blit(value_surf, (value_x, value_y))
+
+        return row_h  # wysokość wiersza do dalszego zliczania
+
+    def _shadow_text(self, surf: pygame.Surface) -> pygame.Surface:
+        sh = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        sh.fill((0,0,0,0))
+        sh.blit(surf, (0,0))
+        tint = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
+        tint.fill((0,0,0,255))
+        sh.blit(tint, (0,0), special_flags=pygame.BLEND_RGBA_MULT)
+        return sh
 
     def _draw_hud(self):
         # Header underline (cyan) spanning full width
@@ -1241,8 +1344,8 @@ class Game:
         )
 
         # SCORE label + value centered inside capsule
-        label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
-        value_surf = self.score_value_font.render(str(self.score), True, SCORE_VALUE_COLOR)
+        label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)  
+        value_surf = self.score_value_font.render(str(self.score), True, self.level_value_color())  
 
         # vertical stacking in the capsule
         gap = 2
@@ -1274,9 +1377,6 @@ class Game:
         t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
 
     def _render_rule_panel_surface(self, panel_scale: float, symbol_scale: float, *, label_font: Optional[pygame.font.Font] = None,):
-        """Rysuje panel reguły. Rozmiar wyliczany z treści:
-        GAP -> NEW RULE -> GAP -> ICON LINE -> GAP.
-        Zwraca (panel_surface, shadow_surface)."""
 
         panel_scale  = max(0.2, float(panel_scale))
         symbol_scale = max(0.2, float(symbol_scale))
@@ -1474,7 +1574,7 @@ class Game:
                     self.screen.blit(self.bg_img, (0, 0))
                 else:
                     self.screen.fill(BG)
-                title_text = "4-Symbols"
+                title_text = "ShapeShifter"
                 tw, th = self.big.size(title_text)
                 tx = self.w / 2 - tw / 2
                 ty = self.h * MENU_TITLE_Y_FACTOR
@@ -1528,16 +1628,13 @@ class Game:
 
                 title_text = "Settings"
                 tw, th = self.big.size(title_text)
-                self.draw_text(self.big, title_text,
-                            (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
+                self.draw_text(self.big, title_text, (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
 
                 y = self.h * SETTINGS_LIST_Y_START_FACTOR
                 for i, (label, value, key) in enumerate(self.settings_items()):
-                    item_text = f"{label}: {value}"
-                    color = ACCENT if (i == self.settings_idx and key is not None) else INK
-                    iw, ih = self.mid.size(item_text)
-                    self.draw_text(self.mid, item_text, (self.w / 2 - iw / 2, y), color=color)
-                    y += ih + SETTINGS_ITEM_SPACING
+                    selected = (i == self.settings_idx and key is not None)
+                    row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
+                    y += row_h + SETTINGS_ITEM_SPACING
 
                 help1 = "↑/↓ select · ←/→ adjust · R reset high score"
                 help2 = "ENTER save · ESC back"
