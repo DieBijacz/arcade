@@ -1,20 +1,4 @@
-"""
-ShapeShifter (cleaned & commented)
------------------------------------
-
-Notes on the cleanup:
-- Removed duplicate constant definitions and duplicate font initializations.
-- Grouped related config/helper utilities and added docstrings.
-- Clarified many method names and added inline comments where the intent
-  wasn’t obvious (esp. UI layout, glitch, rule banner timings).
-- Guarded a few places against missing keys/values and tightened clamps.
-- Kept public constants/behaviour identical so existing assets/config work.
-
-This is a pragmatic tidy-up; the rendering/gameplay logic remains the same.
-"""
-
 from __future__ import annotations
-
 import json
 import math
 import os
@@ -26,34 +10,6 @@ from enum import Enum, auto
 from typing import Dict, Optional, Tuple
 
 import pygame
-
-# ========= IMAGE LOADER (cache) =========
-
-class ImageStore:
-    """Tiny image cache so we don't reload the same texture repeatedly."""
-
-    def __init__(self) -> None:
-        self.cache: dict[str, pygame.Surface] = {}
-
-    def load(self, path: str, *, allow_alpha: bool = True) -> Optional[pygame.Surface]:
-        if not path:
-            return None
-        if path in self.cache:
-            return self.cache[path]
-        try:
-            img = pygame.image.load(path)
-            img = img.convert_alpha() if allow_alpha else img.convert()
-            self.cache[path] = img
-            return img
-        except Exception:
-            # Fail silently – caller can draw a vector fallback.
-            return None
-
-    def clear(self) -> None:
-        self.cache.clear()
-
-
-IMAGES = ImageStore()
 
 # ========= CONFIG =========
 
@@ -79,10 +35,8 @@ DEFAULT_CFG = {
     "highscore": 0,
 }
 
-
 def _deepcopy(obj):
     return json.loads(json.dumps(obj))
-
 
 def _merge(dst: dict, src: dict) -> dict:
     """Shallow+recursive merge for dict trees (src overrides dst)."""
@@ -92,7 +46,6 @@ def _merge(dst: dict, src: dict) -> dict:
         else:
             dst[k] = v
     return dst
-
 
 def _sanitize_cfg(cfg: dict) -> dict:
     """Clamp user config into safe/expected ranges."""
@@ -127,7 +80,6 @@ def _sanitize_cfg(cfg: dict) -> dict:
     r["banner_font_pinned"] = int(max(8, min(200, r.get("banner_font_pinned", 40))))
     return cfg
 
-
 def save_config(partial_cfg: dict) -> None:
     """Persist only the provided keys (merge semantics)."""
     try:
@@ -144,7 +96,6 @@ def save_config(partial_cfg: dict) -> None:
     except Exception:
         pass
 
-
 def load_config() -> dict:
     cfg = _deepcopy(DEFAULT_CFG)
     try:
@@ -160,7 +111,6 @@ def load_config() -> dict:
 
 CFG = load_config()
 
-
 def _persist_windowed_size(width: int, height: int) -> None:
     """Store last windowed size back to config for next run."""
     try:
@@ -170,6 +120,32 @@ def _persist_windowed_size(width: int, height: int) -> None:
     except Exception:
         pass
 
+# ========= IMAGE LOADER (cache) =========
+
+class ImageStore:
+    """Tiny image cache so we don't reload the same texture repeatedly."""
+
+    def __init__(self) -> None:
+        self.cache: dict[str, pygame.Surface] = {}
+
+    def load(self, path: str, *, allow_alpha: bool = True) -> Optional[pygame.Surface]:
+        if not path:
+            return None
+        if path in self.cache:
+            return self.cache[path]
+        try:
+            img = pygame.image.load(path)
+            img = img.convert_alpha() if allow_alpha else img.convert()
+            self.cache[path] = img
+            return img
+        except Exception:
+            # Fail silently – caller can draw a vector fallback.
+            return None
+
+    def clear(self) -> None:
+        self.cache.clear()
+
+IMAGES = ImageStore()
 
 # ========= GPIO (optional) =========
 
@@ -230,7 +206,7 @@ GAP = 0.04                       # przerwa między obiektami w siatce
 FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
 
 # --- Levels --- (progresja poziomów)
-LEVEL_GOAL_PER_LEVEL = 10        # ile trafień, by wskoczyć na kolejny poziom
+LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
 LEVEL_MAX = 5                    # maks. zdefiniowany poziom (na przyszłość)
 LEVELS_ACTIVE_FOR_NOW = 2        # faktycznie używana liczba poziomów
 
@@ -292,6 +268,10 @@ SYMBOL_SPAWN_GLITCH_DURATION = 0.02     # krótki glitch przy spawnie
 SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20        # maks. intensywność poświaty
 SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15  # promień poświaty względem symbolu
 
+# --- Pulse ---
+PULSE_DURATION = 0.30           # ~0.3 s
+PULSE_MAX_SCALE = 1.18          # ile maksymalnie powiększamy
+
 # --- Timer bar (bottom) --- (pasek czasu na dole ekranu)
 TIMER_BAR_WIDTH_FACTOR = 0.60     # szerokość paska względem szerokości okna
 TIMER_BAR_HEIGHT = 18             # wysokość paska w px
@@ -313,6 +293,7 @@ TIMER_POSITION_INDICATOR_PAD = 3  # pionowe „wystawanie” markera poza pasek
 TIMER_LABEL_GAP = 8               # odstęp tekstu od paska
 
 # --- Rule banner --- (baner z nową regułą)
+RULE_BANNER_PINNED_MARGIN = 25    # px odstępu bannera od kapsuły SCORE
 RULE_BANNER_IN_SEC = 0.35         # czas wejścia banera (z góry)
 RULE_BANNER_HOLD_SEC = 2.0        # czas utrzymania w centrum
 RULE_BANNER_TO_TOP_SEC = 0.35     # czas wyjścia/dokowania do topu
@@ -332,6 +313,14 @@ RULE_BANNER_PIN_SCALE = 0.50      # skala panelu po „zadokowaniu” u góry
 RULE_SYMBOL_SCALE_CENTER = 1.00   # skala symboli w centrum
 RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
 RULE_BANNER_MIN_W_FACTOR = 0.80   # minimalna szerokość panelu względem ekranu
+
+# --- Input Ring (wokół symbolu celu)
+RING_RADIUS_FACTOR = 1        # promień ringu jako ułamek rozmiaru docelowego symbolu
+RING_THICKNESS = 6               # grubość okręgu
+RING_COLOR = (120, 200, 255, 120)
+RING_ICON_SIZE_FACTOR = 0.44     # rozmiar ikon na ringu względem symbolu w centrum
+RING_GLOW_COLOR = (255, 240, 120, 70)  # poświata pod poprawną ikoną
+RING_GLOW_RADIUS = 24
 
 # --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
 MENU_TITLE_Y_FACTOR = 0.28        # pionowe położenie tytułu w MENU (proporcja wys.)
@@ -519,6 +508,16 @@ class Game:
         self.time_left = TIMED_DURATION
         self._last_tick = 0.0
         self.highscore = int(CFG.get("highscore", 0))
+
+        # pulse states
+        self.symbol_pulse_start = 0.0
+        self.symbol_pulse_until = 0.0
+
+        self.streak_pulse_start = 0.0
+        self.streak_pulse_until = 0.0
+
+        self.banner_pulse_start = 0.0
+        self.banner_pulse_until = 0.0
 
         # glitch state
         self.glitch_active_until = 0.0
@@ -795,7 +794,7 @@ class Game:
 
         self.last_window_size = self.screen.get_size()
         self._recompute_layout()
-        pygame.display.set_caption("ShapeShifter")
+        pygame.display.set_caption("Remap")
 
     def _snap_to_aspect(self, width: int, height: int) -> Tuple[int, int]:
         target_w, target_h = ASPECT_RATIO
@@ -1076,8 +1075,12 @@ class Game:
             return
         required = self.apply_rule(self.target)
         if name == required:
+
+            # Dobra odpowiedz
+
             self.score += 1
             self.streak += 1
+            if self.streak > 0 and self.streak % 10 == 0: self.trigger_streak_pulse()
             self.hits_since_rule += 1
             self.hits_in_level += 1
             if self.mode is Mode.TIMED:
@@ -1095,6 +1098,9 @@ class Game:
             self.lock_until_all_released = True
             self.accept_after = self.now() + 0.12
         else:
+
+            #Zla odpowiedz
+            if self.rule and self.target == self.rule[0]: self.trigger_banner_pulse()
             self.streak = 0
             self.trigger_shake()
             self.trigger_glitch()
@@ -1257,6 +1263,30 @@ class Game:
             pygame.draw.rect(rr, border, rr.get_rect(), width=border_w, border_radius=radius)
         surf.blit(rr, rect.topleft)
 
+    def _draw_input_ring(self, center: tuple[int, int], base_size: int) -> None:
+        """Ring z ikonami: TRIANGLE (góra), CIRCLE (prawa), SQUARE (lewa), CROSS (dół)."""
+        cx, cy = center
+        r = int(base_size * RING_RADIUS_FACTOR)
+
+        # ring (okrąg)
+        surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+        pygame.draw.circle(surf, RING_COLOR, (cx, cy), r, RING_THICKNESS)
+        self.screen.blit(surf, (0, 0))
+
+        # pozycje ikon
+        pos = {
+            "TRIANGLE": (cx, cy - r),   # top
+            "CIRCLE":   (cx + r, cy),   # right
+            "SQUARE":   (cx - r, cy),   # left
+            "CROSS":    (cx, cy + r),   # bottom
+        }
+        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+
+        for name, (ix, iy) in pos.items():
+            rect = pygame.Rect(0, 0, icon_size, icon_size)
+            rect.center = (ix, iy)
+            self.draw_symbol(self.screen, name, rect)
+
     def _draw_label_value_vstack(self, *, label: str, value: str, left: bool, anchor_rect: pygame.Rect) -> None:
         label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
         value_surf = self.hud_value_font.render(value, True, HUD_VALUE_COLOR)
@@ -1275,6 +1305,23 @@ class Game:
         self.screen.blit(label_surf, (lx, y))
         self.screen.blit(value_surf, (vx, y + label_surf.get_height() + 2))
 
+    def _draw_label_value_vstack_center(self, *, label: str, value: str, anchor_rect: pygame.Rect) -> None:
+        label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
+        value_surf = self.hud_value_font.render(value, True, HUD_VALUE_COLOR)
+        gap = 2
+        total_h = label_surf.get_height() + gap + value_surf.get_height()
+
+        y = anchor_rect.centery - total_h // 2
+        lx = anchor_rect.centerx - label_surf.get_width() // 2
+        vx = anchor_rect.centerx - value_surf.get_width() // 2
+
+        # lekki cień
+        self.screen.blit(label_surf, (lx + 1, y + 1))
+        self.screen.blit(value_surf, (vx + 2, y + label_surf.get_height() + 3))
+        # tekst
+        self.screen.blit(label_surf, (lx, y))
+        self.screen.blit(value_surf, (vx, y + label_surf.get_height() + gap))
+        
     def _shadow_text(self, surf: pygame.Surface) -> pygame.Surface:
         sh = pygame.Surface(surf.get_size(), pygame.SRCALPHA)
         sh.blit(surf, (0, 0))
@@ -1316,43 +1363,81 @@ class Game:
     def _draw_hud(self) -> None:
         """Top header (streak / score / highscore) + bottom timer bar in-game."""
         # Header underline (cyan)
-        pygame.draw.line(
-            self.screen,
-            TOPBAR_UNDERLINE_COLOR,
-            (self.topbar_rect.left, self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2),
-            (self.topbar_rect.right, self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2),
-            TOPBAR_UNDERLINE_THICKNESS,
-        )
-
-        # Left: STREAK   |  Right: HIGHSCORE
-        pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
-        left_block = pygame.Rect(
-            self.topbar_rect.left + pad_x,
-            self.topbar_rect.top,
-            max(1, self.w // 3 - pad_x),
-            self.topbar_rect.height,
-        )
-        right_block = pygame.Rect(
-            self.topbar_rect.right - pad_x - max(1, self.w // 3 - pad_x),
-            self.topbar_rect.top,
-            max(1, self.w // 3 - pad_x),
-            self.topbar_rect.height,
-        )
-        self._draw_label_value_vstack(label="STREAK", value=str(self.streak), left=True, anchor_rect=left_block)
-        self._draw_label_value_vstack(label="HIGHSCORE", value=str(self.highscore), left=False, anchor_rect=right_block)
-
-        # Center: SCORE capsule
+        # --- underline split to avoid drawing under the SCORE capsule ---
         cap = self.score_capsule_rect
+        y   = self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2
+        th  = TOPBAR_UNDERLINE_THICKNESS
+        col = TOPBAR_UNDERLINE_COLOR
+
+        left_end    = max(self.topbar_rect.left, cap.left - 1)
+        right_start = min(self.topbar_rect.right, cap.right + 1)
+
+        # lewy odcinek
+        if left_end > self.topbar_rect.left:
+            pygame.draw.line(self.screen, col,
+                            (self.topbar_rect.left, y), (left_end, y), th)
+        # prawy odcinek
+        if right_start < self.topbar_rect.right:
+            pygame.draw.line(self.screen, col,
+                            (right_start, y), (self.topbar_rect.right, y), th)
+
+        # --- STREAK (lewo) / HIGHSCORE (prawo) liczone względem kapsuły SCORE ---
+        pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
+        cap = self.score_capsule_rect
+
+        # lewa zatoka: od lewego marginesu do lewej krawędzi kapsuły
+        left_block = pygame.Rect(
+            pad_x,
+            self.topbar_rect.top,
+            max(1, cap.left - pad_x * 2),
+            self.topbar_rect.height,
+        )
+
+        # prawa zatoka: od prawej krawędzi kapsuły do prawego marginesu
+        right_block = pygame.Rect(
+            cap.right + pad_x,
+            self.topbar_rect.top,
+            max(1, self.w - pad_x - (cap.right + pad_x)),
+            self.topbar_rect.height,
+        )
+
+        # === STREAK z pulsem na wartości ===
+        streak_label = "STREAK"
+        streak_value = str(self.streak)
+
+        # etykieta (bez skali)
+        label_surf = self.hud_label_font.render(streak_label, True, HUD_LABEL_COLOR)
+        label_x = left_block.centerx - label_surf.get_width() // 2
+        label_y = left_block.centery - label_surf.get_height() - 2
+        # cień + tekst
+        self.screen.blit(label_surf, (label_x + 1, label_y + 1))
+        self.screen.blit(label_surf, (label_x, label_y))
+
+        # wartość – render i ewentualne skalowanie (pulse)
+        value_surf = self.hud_value_font.render(streak_value, True, HUD_VALUE_COLOR)
+        scale = self.get_streak_pulse_scale() if hasattr(self, "get_streak_pulse_scale") else 1.0
+        if scale != 1.0:
+            vw, vh = value_surf.get_size()
+            sw, sh = max(1, int(vw * scale)), max(1, int(vh * scale))
+            value_surf = pygame.transform.smoothscale(value_surf, (sw, sh))
+
+        vx = left_block.centerx - value_surf.get_width() // 2
+        vy = label_y + label_surf.get_height() + 2
+        self.screen.blit(self._shadow_text(value_surf), (vx + 2, vy + 2))
+        self.screen.blit(value_surf, (vx, vy))
+
+        # HIGHSCORE po prawej (bez zmian)
+        self._draw_label_value_vstack_center(
+            label="HIGHSCORE", value=str(self.highscore), anchor_rect=right_block
+        )
+
+        # --- kapsuła SCORE ---
         sx, sy = SCORE_CAPSULE_SHADOW_OFFSET
         shadow_rect = cap.move(sx, sy)
         self._draw_round_rect(self.screen, shadow_rect, SCORE_CAPSULE_SHADOW, radius=SCORE_CAPSULE_RADIUS + 2)
         self._draw_round_rect(
-            self.screen,
-            cap,
-            SCORE_CAPSULE_BG,
-            border=SCORE_CAPSULE_BORDER_COLOR,
-            border_w=2,
-            radius=SCORE_CAPSULE_RADIUS,
+            self.screen, cap, SCORE_CAPSULE_BG,
+            border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
         )
         label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
         value_surf = self.score_value_font.render(str(self.score), True, self.level_value_color())
@@ -1362,14 +1447,14 @@ class Game:
         vx = cap.centerx - value_surf.get_width() // 2
         ly = cap.centery - total_h // 2
         vy = ly + label_surf.get_height() + gap
-        # slight inner shadow
         self.screen.blit(label_surf, (lx + 1, ly + 1))
         self.screen.blit(value_surf, (vx + 1, vy + 1))
         self.screen.blit(label_surf, (lx, ly))
         self.screen.blit(value_surf, (vx, vy))
 
-        # docking line for rule panel (pinned state)
-        self._topbar_bottom_y = self.topbar_rect.bottom + int(self.h * 0.02)
+        # docelowe Y dla dockowania bannera: poniżej kapsuły SCORE
+        margin = self.px(RULE_BANNER_PINNED_MARGIN)
+        self._rule_pinned_y = max(self.topbar_rect.bottom + self.px(8), self.score_capsule_rect.bottom + margin)
 
         # Bottom timer (only in-game)
         if self.scene is Scene.GAME:
@@ -1474,7 +1559,7 @@ class Game:
             phase = "out"; p = self._ease_out_cubic((t - RULE_BANNER_IN_SEC - RULE_BANNER_HOLD_SEC) / max(0.001, RULE_BANNER_TO_TOP_SEC))
 
         mid_y = int(self.h * 0.30)
-        pinned_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
+        pinned_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
 
         if phase == "in" and getattr(self, "rule_banner_from_pinned", False):
             # dock → center
@@ -1498,6 +1583,7 @@ class Game:
             y = int(mid_y + (pinned_y - mid_y) * p)
             font = self.rule_font_pinned
 
+        panel_scale *= self.get_banner_pulse_scale()
         panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, label_font=font)
         panel_w, panel_h = panel.get_size()
         panel_x = (self.w - panel_w) // 2
@@ -1509,10 +1595,11 @@ class Game:
             return
         panel_scale = RULE_BANNER_PIN_SCALE
         symbol_scale = RULE_SYMBOL_SCALE_PINNED
+        panel_scale *= self.get_banner_pulse_scale()
         panel, shadow = self._render_rule_panel_surface(panel_scale, symbol_scale, label_font=self.rule_font_pinned)
         panel_w, panel_h = panel.get_size()
         panel_x = (self.w - panel_w) // 2
-        panel_y = int(getattr(self, "_topbar_bottom_y", self.h * HUD_TOP_MARGIN_FACTOR))
+        panel_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
         self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
         self.screen.blit(panel, (panel_x, panel_y))
 
@@ -1524,6 +1611,7 @@ class Game:
 
         base_size = self.w * SYMBOL_BASE_SIZE_FACTOR
         scale = SYMBOL_ANIM_START_SCALE + (1.0 - SYMBOL_ANIM_START_SCALE) * eased
+        scale *= self.get_symbol_pulse_scale()
         size = base_size * scale
 
         start_y = self.h * (0.5 + SYMBOL_ANIM_OFFSET_Y)
@@ -1607,6 +1695,48 @@ class Game:
             if self.lock_until_all_released and not self.keys_down and self.now() >= getattr(self, "accept_after", 0.0):
                 self.lock_until_all_released = False
 
+    def _pulse_curve01(self, t: float) -> float:
+        t = max(0.0, min(1.0, t))
+        # sin(π * t) idzie 0→1→0, więc mapujemy do 1→max→1
+        return 1.0 + (PULSE_MAX_SCALE - 1.0) * math.sin(math.pi * t)
+
+    def _pulse_scale_from(self, start: float, until: float) -> float:
+        if start <= 0.0:
+            return 1.0
+        now = self.now()
+        if now >= until:
+            return 1.0
+        dur = max(1e-6, until - start)
+        t = (now - start) / dur
+        return self._pulse_curve01(t)
+
+    # >>> NEW: trigerry
+    def trigger_symbol_pulse(self):
+        now = self.now()
+        self.symbol_pulse_start = now
+        self.symbol_pulse_until = now + PULSE_DURATION
+
+    def trigger_streak_pulse(self):
+        now = self.now()
+        self.streak_pulse_start = now
+        self.streak_pulse_until = now + PULSE_DURATION
+
+    def trigger_banner_pulse(self):
+        # nawet jeśli baner zadokowany, też „podbije” panel
+        now = self.now()
+        self.banner_pulse_start = now
+        self.banner_pulse_until = now + PULSE_DURATION
+
+    # >>> NEW: gettery skali
+    def get_symbol_pulse_scale(self) -> float:
+        return self._pulse_scale_from(self.symbol_pulse_start, self.symbol_pulse_until)
+
+    def get_streak_pulse_scale(self) -> float:
+        return self._pulse_scale_from(self.streak_pulse_start, self.streak_pulse_until)
+
+    def get_banner_pulse_scale(self) -> float:
+        return self._pulse_scale_from(self.banner_pulse_start, self.banner_pulse_until)
+    
     # ------------------------------- RENDERING ------------------------------- #
     def _blit_bg(self):
         """Draw background image if present, otherwise fill with fallback color."""
@@ -1672,11 +1802,6 @@ class Game:
             self.screen.blit(timer_font.render(label, True, (0, 0, 0)), (tx + 2, ty + 2))
             self.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
 
-    # (The rest of rendering helpers are unchanged; keeping them for context)
-    # draw_symbol, draw_arrow, draw_chip, _draw_round_rect, _draw_label_value_vstack,
-    # _draw_settings_row, _shadow_text, _draw_hud, _ease_out_cubic, _render_rule_panel_surface,
-    # _draw_rule_banner_anim, _draw_rule_banner_pinned, _draw_spawn_animation
-
     def _draw_gameplay(self):
         self._blit_bg()
         self._draw_hud()
@@ -1685,6 +1810,11 @@ class Game:
         if self.target:
             base_rect = pygame.Rect(0, 0, self.w * SYMBOL_BASE_SIZE_FACTOR, self.w * SYMBOL_BASE_SIZE_FACTOR)
             base_rect.center = (self.w * 0.5, self.h * 0.5)
+
+            # ring dookoła symbolu (bez podświetleń)
+            self._draw_input_ring(base_rect.center, base_rect.width)
+
+            # symbol centralny
             self._draw_spawn_animation(self.screen, self.target, base_rect)
 
     def draw(self):
@@ -1702,7 +1832,7 @@ class Game:
 
             elif self.scene is Scene.MENU:
                 self._blit_bg()
-                title_text = "ShapeShifter"
+                title_text = "Remap"
                 tw, th = self.big.size(title_text)
                 tx = self.w / 2 - tw / 2
                 ty = self.h * MENU_TITLE_Y_FACTOR
@@ -1789,7 +1919,7 @@ def main():
     screen = pygame.display.set_mode((1, 1))  # tiny placeholder; real size set next
     game = Game(screen, mode=Mode.SPEEDUP)
     game._set_display_mode(fullscreen)
-    pygame.display.set_caption("4-Symbols")
+    pygame.display.set_caption("Remap")
     iq = InputQueue()
     _ = init_gpio(iq)
 
