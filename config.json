@@ -44,5 +44,47 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 158
+  "highscore": 158,
+  "levels": {
+    "1": {
+      "hits": 15,
+      "color": [
+        235,
+        235,
+        235
+      ]
+    },
+    "2": {
+      "hits": 15,
+      "color": [
+        60,
+        200,
+        120
+      ]
+    },
+    "3": {
+      "hits": 15,
+      "color": [
+        90,
+        200,
+        255
+      ]
+    },
+    "4": {
+      "hits": 15,
+      "color": [
+        255,
+        170,
+        80
+      ]
+    },
+    "5": {
+      "hits": 15,
+      "color": [
+        180,
+        120,
+        255
+      ]
+    }
+  }
 }

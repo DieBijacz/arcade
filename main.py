@@ -33,6 +33,7 @@ DEFAULT_CFG = {
         "arrow": "assets/images/arrow.png",
     },
     "highscore": 0,
+    "levels": {},
 }
 
 def _deepcopy(obj):
@@ -199,6 +200,12 @@ SYMBOL_COLORS = {
     "CROSS": (0, 0, 255),
     "SQUARE": (255, 215, 0),
 }
+
+LEVEL_COLOR_CHOICES: List[Tuple[int,int,int]] = [
+    (235,235,235), (60,200,120), (90,200,255),
+    (255,170,80), (220,80,80), (180,120,255),
+    (255,210,90), (180,200,230)
+]
 
 # Ogólne odstępy/układ
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
@@ -480,35 +487,63 @@ class LevelCfg:
     instruction: str = ""                                   # krótki tekst instrukcji
     instruction_sec: float = 5.0                            # ile sekund trwa ekran instrukcji
     score_color: Tuple[int,int,int] = SCORE_VALUE_COLOR
+    hits_required: int = LEVEL_GOAL_PER_LEVEL
 
 LEVELS: Dict[int, LevelCfg] = {
     1: LevelCfg(1,
         rules=[],
         instruction="Level 1 — Classic\nOdpowiadaj poprawnie.",
-        score_color=(235,235,235)
+        score_color=(235,235,235),
+        hits_required=15
     ),
     2: LevelCfg(2,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         instruction="Level 2 — New Rule\nZwracaj uwagę na baner.",
-        score_color=(60,200,120)
+        score_color=(60,200,120),
+        hits_required=15
     ),
     3: LevelCfg(3,
-        rules=[],  # tylko rotacje, BEZ banera i BEZ mappingu
+        rules=[],
         rotations_per_level=3,
-        instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie."
+        instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie.",
+        score_color=(90,200,255),   # CYAN (domyślny, jeśli brakował)
+        hits_required=15
     ),
     4: LevelCfg(4,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         rotations_per_level=3,
-        instruction="Level 4 — Mix\nReguły + rotacje."
+        instruction="Level 4 — Mix\nReguły + rotacje.",
+        score_color=(255,170,80),   # POMARAŃCZ
+        hits_required=15
     ),
     5: LevelCfg(5,
-        rules=[],  # memory bez mappingu
+        rules=[],
         rotations_per_level=1,
         memory_mode=True, memory_intro_sec=3.0,
-        instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną."
+        instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną.",
+        score_color=(180,120,255),  # FIOLET
+        hits_required=15
     ),
 }
+
+def apply_levels_from_cfg(cfg: dict) -> None:
+    """Nadpisz LEVELS danymi z pliku config.json (kolor + hits)."""
+    lvl_cfg = cfg.get("levels", {}) or {}
+    for k, v in lvl_cfg.items():
+        try:
+            lid = int(k)
+            if lid in LEVELS:
+                if isinstance(v, dict):
+                    if "hits" in v:
+                        LEVELS[lid].hits_required = int(max(1, min(999, v["hits"])))
+                    if "color" in v and isinstance(v["color"], (list, tuple)) and len(v["color"]) == 3:
+                        r,g,b = [int(max(0, min(255, c))) for c in v["color"]]
+                        LEVELS[lid].score_color = (r,g,b)
+        except Exception:
+            pass
+
+# Zastosuj odczytane ustawienia po zdefiniowaniu LEVELS:
+apply_levels_from_cfg(CFG)
 
 
 # ========= RULE MANAGER =========
@@ -900,6 +935,8 @@ class Game:
         self.memory_intro_until = 0.0          # kiedy zakończyć podgląd układu
 
         # settings buffer (Settings scene)
+        self.settings_scroll = 0.0
+        self._settings_row_tops: List[Tuple[float, float]] = []  # (y, height) bez scrolla
         self.settings_idx = 0
         self.settings = {
             "target_time_initial": float(CFG["speedup"]["target_time_initial"]),
@@ -1152,7 +1189,7 @@ class Game:
 
 
     def settings_items(self):
-        return [
+        items = [
             ("Initial time", f"{self.settings['target_time_initial']:.2f}s", "target_time_initial"),
             ("Time step", f"{self.settings['target_time_step']:+.2f}s/hit", "target_time_step"),
             ("Minimum time", f"{self.settings['target_time_min']:.2f}s", "target_time_min"),
@@ -1164,7 +1201,16 @@ class Game:
             ("Rule bonus", f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
             ("Banner font (center)", f"{self.settings['rule_font_center']}", "rule_font_center"),
             ("Banner font (pinned)", f"{self.settings['rule_font_pinned']}", "rule_font_pinned"),
+            ("", "", None),  # separator
         ]
+        # --- dynamiczne wpisy dla leveli ---
+        for lid in range(1, self.levels_active + 1):
+            L = LEVELS.get(lid)
+            if not L: continue
+            col = "#{:02X}{:02X}{:02X}".format(*L.score_color)
+            items.append((f"Level {lid} — Required hits", f"{L.hits_required}", f"level{lid}_hits"))
+            items.append((f"Level {lid} — Color", col, f"level{lid}_color"))
+        return items
 
     def settings_move(self, delta: int) -> None:
         items = self.settings_items()
@@ -1173,8 +1219,33 @@ class Game:
             idx = (idx + delta) % n
             if items[idx][2] is not None:
                 self.settings_idx = idx
-                return
-        self.settings_idx = 0
+                break
+        # auto-scroll to keep selected row visible
+        self._ensure_selected_visible()
+
+    def _settings_viewport(self) -> pygame.Rect:
+        top = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
+        # miejsce na help na dole
+        help_margin = self.px(SETTINGS_HELP_MARGIN_TOP)
+        help_gap    = self.px(SETTINGS_HELP_GAP)
+        help_h = self.font.get_height()*2 + help_margin + help_gap + self.px(8)
+        height = max(50, self.h - top - help_h)
+        return pygame.Rect(0, top, self.w, height)
+
+    def _ensure_selected_visible(self) -> None:
+        if not self._settings_row_tops:
+            return
+        vp = self._settings_viewport()
+        try:
+            y, h = self._settings_row_tops[self.settings_idx]
+        except IndexError:
+            return
+        row_top = y - self.settings_scroll
+        row_bot = y + h - self.settings_scroll
+        if row_top < vp.top:
+            self.settings_scroll = max(0.0, y - vp.top)
+        elif row_bot > vp.bottom:
+            self.settings_scroll = max(0.0, (y + h) - vp.bottom)
 
     def toggle_settings(self) -> None:
         if self.scene is Scene.SETTINGS:
@@ -1196,14 +1267,41 @@ class Game:
     def settings_adjust(self, delta: int) -> None:
         items = self.settings_items()
         key = items[self.settings_idx][2]
+
         if key is None:
             return
+        
+        # --- per-level edits ---
+        if key and key.startswith("level") and ("_hits" in key or "_color" in key):
+            try:
+                lid = int(key.split("level",1)[1].split("_",1)[0])
+                L = LEVELS.get(lid)
+                if L:
+                    if key.endswith("_hits"):
+                        L.hits_required = max(1, min(999, L.hits_required + delta))
+                        # jeśli edytujesz aktualny level – zaktualizuj bieżący limit
+                        if self.level == lid:
+                            self.level_goal = L.hits_required
+                    elif key.endswith("_color"):
+                        # cyklicznie po palecie
+                        idx = 0
+                        try:
+                            idx = next(i for i,c in enumerate(LEVEL_COLOR_CHOICES) if c == L.score_color)
+                        except StopIteration:
+                            idx = 0
+                        idx = (idx + delta) % len(LEVEL_COLOR_CHOICES)
+                        L.score_color = LEVEL_COLOR_CHOICES[idx]
+                return
+            except Exception:
+                return
+
         if key == "fullscreen":
             self.settings["fullscreen"] = not self.settings["fullscreen"]
             self.apply_fullscreen_now()
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
+        
         if key == "glitch_enabled":
             self.settings["glitch_enabled"] = not self.settings["glitch_enabled"]
             if not self.settings["glitch_enabled"]:
@@ -1254,6 +1352,8 @@ class Game:
         self.settings_move(0)
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.SETTINGS
+        self.settings_scroll = 0.0
+        self._ensure_selected_visible()
 
     def settings_save(self) -> None:
         self._settings_clamp()
@@ -1274,6 +1374,13 @@ class Game:
         CFG["rules"]["banner_font_center"] = int(s["rule_font_center"]) 
         CFG["rules"]["banner_font_pinned"] = int(s["rule_font_pinned"]) 
 
+        levels_dump = {}
+        for lid, L in LEVELS.items():
+            levels_dump[str(lid)] = {
+                "hits": int(L.hits_required),
+                "color": [int(L.score_color[0]), int(L.score_color[1]), int(L.score_color[2])],
+            }
+
         save_config(
             {
                 "speedup": CFG["speedup"],
@@ -1293,8 +1400,10 @@ class Game:
                     "banner_font_pinned": CFG["rules"]["banner_font_pinned"],
                 },
                 "highscore": CFG.get("highscore", 0),
+                "levels": levels_dump,
             }
         )
+
         if self.music_ok:
             pygame.mixer.music.set_volume(float(CFG["audio"]["volume"]))
         self._set_display_mode(bool(CFG["display"]["fullscreen"]))
@@ -1313,7 +1422,7 @@ class Game:
     def reset_game_state(self) -> None:
         self.level = 1
         self.hits_in_level = 0
-        self.level_goal = LEVEL_GOAL_PER_LEVEL
+        self.level_goal = LEVELS[1].hits_required
         self.score = 0
         self.streak = 0
         self.lives = int(self.settings.get("lives", MAX_LIVES))
@@ -1336,6 +1445,7 @@ class Game:
 
     def apply_level(self, lvl: int) -> None:
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
+        self.level_goal = int(max(1, self.level_cfg.hits_required))
 
         # wyczyść reguły poprzedniego levelu (instalacja konkretnych nastąpi po INSTRUCTION)
         self.rules.install([])
@@ -1385,6 +1495,11 @@ class Game:
 
     def level_value_color(self) -> Tuple[int, int, int]:
         return getattr(self.level_cfg, "score_color", LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR))
+
+    def level_ring_color(self) -> Tuple[int,int,int,int]:
+        r, g, b = self.level_value_color()
+        a = RING_COLOR[3] if isinstance(RING_COLOR, tuple) and len(RING_COLOR) == 4 else 120
+        return (r, g, b, a)
 
     def new_target(self) -> None:
         prev = self.target
@@ -1458,6 +1573,10 @@ class Game:
                     self.start_game(); return
 
             elif self.scene is Scene.SETTINGS:
+                if event.key == pygame.K_PAGEUP:
+                    self.settings_scroll = max(0.0, self.settings_scroll - self.h * 0.3); return
+                if event.key == pygame.K_PAGEDOWN:
+                    self.settings_scroll = self.settings_scroll + self.h * 0.3; return
                 if event.key == pygame.K_ESCAPE:
                     self.settings_cancel(); return
                 if event.key == pygame.K_RETURN:
@@ -1494,6 +1613,10 @@ class Game:
             self.keys_down.discard(event.key)
             if self.lock_until_all_released and not self.keys_down and self.now() >= getattr(self, "accept_after", 0.0):
                 self.lock_until_all_released = False
+            if event.type == pygame.MOUSEWHEEL and self.scene is Scene.SETTINGS:
+                self.settings_scroll = max(0.0, self.settings_scroll - event.y * 40)
+                return
+
 
     def handle_input_symbol(self, name: str) -> None:
         if self.scene is not Scene.GAME or not self.target:
@@ -2149,7 +2272,7 @@ class Game:
 
         # ring
         surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-        pygame.draw.circle(surf, RING_COLOR, (cx, cy), r, RING_THICKNESS)
+        pygame.draw.circle(surf, self.level_ring_color(), (cx, cy), r, RING_THICKNESS)
         self.screen.blit(surf, (0, 0))
 
         pos_xy = {
@@ -2334,24 +2457,51 @@ class Game:
                 tw, th = self.big.size(title_text)
                 self.draw_text(self.big, title_text, (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
 
-                y = self.h * SETTINGS_LIST_Y_START_FACTOR
+                viewport = self._settings_viewport()
+                y0 = viewport.top
                 item_spacing = self.px(SETTINGS_ITEM_SPACING)
 
-                for i, (label, value, key) in enumerate(self.settings_items()):
+                # policz wysokość & zapisz pozycje dla auto-scroll
+                items = self.settings_items()
+                self._settings_row_tops = []
+                # suchy przebieg: zbierz wymiary
+                y_probe = y0
+                for i, (label, value, key) in enumerate(items):
+                    # zmierz wysokość rzędu (bez rysowania)
+                    label_surf = self.settings_font.render(label, True, INK if key is not None else ACCENT)
+                    value_surf = self.settings_font.render(value, True, INK if key is not None else ACCENT)
+                    row_h = max(label_surf.get_height(), value_surf.get_height())
+                    self._settings_row_tops.append((y_probe, row_h))
+                    y_probe += row_h + item_spacing
+                content_h = y_probe - y0
+
+                # ogranicz scroll
+                max_scroll = max(0, content_h - viewport.height)
+                if self.settings_scroll > max_scroll:
+                    self.settings_scroll = float(max_scroll)
+                if self.settings_scroll < 0:
+                    self.settings_scroll = 0.0
+
+                # rysowanie z clipem
+                prev_clip = self.screen.get_clip()
+                self.screen.set_clip(viewport)
+                y = y0 - self.settings_scroll
+                for i, (label, value, key) in enumerate(items):
                     selected = (i == self.settings_idx and key is not None)
                     row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
                     y += row_h + item_spacing
+                self.screen.set_clip(prev_clip)
 
-                help1 = "↑/↓ select · ←/→ adjust · R reset high score"
-                help2 = "ENTER save · ESC back"
-
+                # help na dole
+                help1 = "↑/↓ select · ←/→ adjust · PageUp/PageDown scroll · R reset high score"
+                help2 = "ENTER save · ESC back · MouseWheel scroll"
                 help_margin = self.px(SETTINGS_HELP_MARGIN_TOP)
                 help_gap    = self.px(SETTINGS_HELP_GAP)
-
                 w1, h1 = self.font.size(help1)
                 w2, h2 = self.font.size(help2)
-                self.draw_text(self.font, help1, (self.w / 2 - w1 / 2, y + help_margin))
-                self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, y + help_margin + h1 + help_gap))
+                base_y = viewport.bottom + help_margin
+                self.draw_text(self.font, help1, (self.w / 2 - w1 / 2, base_y))
+                self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, base_y + h1 + help_gap))
             
             elif self.scene is Scene.INSTRUCTION:
                 self._blit_bg()
