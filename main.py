@@ -268,6 +268,8 @@ SYMBOL_SPAWN_GLITCH_DURATION = 0.02     # krótki glitch przy spawnie
 SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20        # maks. intensywność poświaty
 SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15  # promień poświaty względem symbolu
 
+EXIT_SLIDE_SEC = 0.18   # szybki „zjazd” po poprawnej odpowiedzi
+
 # --- Pulse ---
 PULSE_DURATION = 0.30           # ~0.3 s
 PULSE_MAX_SCALE = 1.18          # ile maksymalnie powiększamy
@@ -611,6 +613,12 @@ class EffectsManager:
         # pulses
         self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0) }
 
+        # exit slide (po poprawnej odpowiedzi)
+        self.exit_active = False
+        self.exit_start = 0.0
+        self.exit_symbol: Optional[str] = None
+        self.exit_duration = EXIT_SLIDE_SEC
+
     # -------- cfg / reset --------
     def set_enabled(self, on: bool):
         self.enabled = bool(on)
@@ -682,6 +690,14 @@ class EffectsManager:
         dur = max(1e-6, until - start)
         t = (now - start) / dur
         return self._pulse_curve01(t)
+    
+    def is_pulse_active(self, kind: str) -> bool:
+        start, until = self._pulses.get(kind, (0.0, 0.0))
+        return start > 0.0 and self.now() < until
+
+    def stop_pulse(self, kind: str):
+        if kind in self._pulses:
+            self._pulses[kind] = (0.0, 0.0)
 
     def shake_offset(self, screen_w: int) -> tuple[float, float]:
         import math
@@ -755,12 +771,33 @@ class EffectsManager:
             pygame.draw.rect(out, col, (x, y, bw, bh))
         return out
 
+    def start_exit_slide(self, symbol: str, duration: float = EXIT_SLIDE_SEC):
+        self.exit_symbol = symbol
+        self.exit_duration = max(0.05, float(duration))
+        self.exit_start = self.now()
+        self.exit_active = True
+
+    def is_exit_active(self) -> bool:
+        return self.exit_active and (self.now() - self.exit_start) <= self.exit_duration
+
+    def exit_progress(self) -> float:
+        if not self.exit_active:
+            return 0.0
+        t = (self.now() - self.exit_start) / max(1e-6, self.exit_duration)
+        return max(0.0, min(1.0, t))
+
+    def clear_exit(self):
+        self.exit_active = False
+        self.exit_symbol = None
+        self.exit_start = 0.0
+
 
 # ========= GAME =========
 
 class Game:
 
     # ---- Inicjalizacja i podstawy cyklu życia ----
+
 
     def __init__(self, screen: pygame.Surface, mode: Mode = Mode.SPEEDUP):
         self.screen = screen
@@ -880,6 +917,7 @@ class Game:
 
         # effects
         self.fx = EffectsManager(self.now, glitch_enabled=self.settings.get("glitch_enabled", True))
+        self.exit_dir_pos: Optional[str] = None  # "TOP"|"RIGHT"|"LEFT"|"BOTTOM"
 
         # music
         self.music_ok = False
@@ -901,7 +939,9 @@ class Game:
         if self.music_ok:
             pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
 
+
     # ---- Czas i proste utilsy ----
+
 
     def now(self) -> float:
         return time.time()
@@ -928,7 +968,9 @@ class Game:
     def lives_enabled(self) -> bool:
         return int(self.settings.get("lives", MAX_LIVES)) > 0
 
+
 # ---- Zasoby, layout, UI scale, fonty, tło ----
+
 
     def _ensure_framebuffer(self) -> None:
         self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
@@ -1038,7 +1080,9 @@ class Game:
         except Exception:
             self.music_ok = False
 
+
 # ---- Okno/tryb wyświetlania & rozmiar ----
+
 
     def _set_display_mode(self, fullscreen: bool) -> None:
         if fullscreen:
@@ -1096,12 +1140,16 @@ class Game:
         _persist_windowed_size(width, height)
         self._recompute_layout()
 
+
 # ---- Klawisze i mapowania wejść ----
+
 
     def _recompute_keymap(self) -> None:
         self.keymap_current = {k: self.ring_layout[pos] for k, pos in self.key_to_pos.items()}
 
+
 # ---- Ustawienia ----
+
 
     def settings_items(self):
         return [
@@ -1258,7 +1306,9 @@ class Game:
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
+
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
+
 
     def reset_game_state(self) -> None:
         self.level = 1
@@ -1342,6 +1392,7 @@ class Game:
         self.target = random.choice(choices)
         self.target_deadline = self.now() + self.target_time if self.mode is Mode.SPEEDUP else None
         self.symbol_spawn_time = self.now()
+        self.fx.stop_pulse('symbol')
 
     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
         now = self.now()
@@ -1377,7 +1428,9 @@ class Game:
         # 3) Nowy target na start rozgrywki
         self.new_target()
 
+
 # ---- Pętla gry i wejścia (flow rozgrywki) ----
+
 
     def handle_event(self, event: pygame.event.Event, iq: InputQueue):
         if event.type == pygame.VIDEORESIZE:
@@ -1478,12 +1531,33 @@ class Game:
             if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
                 self._rotate_ring_random()
 
+            # po level_up() — jeśli przeszliśmy do INSTRUCTION, przerywamy
             if self.hits_in_level >= self.level_goal:
                 self.level_up()
+                if self.scene is Scene.INSTRUCTION:
+                    # nie odpalaj exit-slide; nowy target pojawi się po instrukcji
+                    self.lock_until_all_released = True
+                    self.accept_after = self.now() + 0.12
+                    return
 
-            self.new_target()
-            self.lock_until_all_released = True
-            self.accept_after = self.now() + 0.12
+            # uruchamianie exit-slide — tylko jeśli baner nie jest aktywny
+            pos = next((p for p, s in self.ring_layout.items() if s == required), None)
+            if pos and self.target and not self.banner.is_active(self.now()):
+                now = self.now()
+                self.exit_dir_pos = pos
+                self.fx.start_exit_slide(self.target, duration=EXIT_SLIDE_SEC)
+
+                # nie nadpisuj dłuższej pauzy (np. od banera)
+                self.pause_start = now
+                self.pause_until = now + EXIT_SLIDE_SEC
+
+                self.lock_until_all_released = True
+                self.accept_after = self.now() + 0.12
+            else:
+                # fallback
+                self.new_target()
+                self.lock_until_all_released = True
+                self.accept_after = self.now() + 0.12
 
         else:
 
@@ -1530,7 +1604,7 @@ class Game:
             self._last_tick = now
             return
 
-        # „odkorkuj” po pauzie
+        # po „odkorkowaniu” pauzy:
         if self.pause_until and now >= self.pause_until:
             paused = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
             self.pause_start = 0.0
@@ -1538,6 +1612,38 @@ class Game:
             if self.target_deadline is not None:
                 self.target_deadline += paused
             self._last_tick = now
+
+            if not self.fx.is_exit_active() and self.exit_dir_pos:
+                self.fx.clear_exit()
+                self.exit_dir_pos = None
+                self.new_target()
+
+            # jeśli to koniec exit-slide — wyczyść i spawnuj nowy cel
+            if hasattr(self.fx, "is_exit_active") and not self.fx.is_exit_active() and self.exit_dir_pos:
+                self.fx.clear_exit()
+                self.exit_dir_pos = None
+                self.new_target()
+        
+            # Jeśli skończyła się pauza animacji – posprzątaj i spawn nowego (tylko jeśli nie ma już pauzy)
+            if (not self.pause_until and
+                hasattr(self.fx, "is_exit_active") and not self.fx.is_exit_active() and
+                getattr(self, "exit_dir_pos", None)):
+                self.fx.clear_exit()
+                self.exit_dir_pos = None
+                self.new_target()
+
+        # --- PULSE SYMBOLU, gdy minęła połowa czasu na target (SPEEDUP) ---
+        if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
+            self.target is not None and self.target_deadline is not None and
+            self.target_time > 0):
+            now = self.now()
+            remaining = max(0.0, self.target_deadline - now)
+            left_ratio = remaining / max(1e-6, self.target_time)
+            if left_ratio <= 0.5:
+                # utrzymuj puls do zmiany symbolu lub końca czasu:
+                # jeśli poprzedni cykl się skończył, odpal kolejny
+                if not self.fx.is_pulse_active('symbol'):
+                    self.fx.trigger_pulse_symbol()
 
         # TIMED: upływ czasu
         if self.mode is Mode.TIMED:
@@ -1570,7 +1676,9 @@ class Game:
         for n in iq.pop_all():
             self.handle_input_symbol(n)
 
+
 # ---- Rysowanie ----
+
 
     def _draw_round_rect(
         self,
@@ -2082,20 +2190,83 @@ class Game:
         draw_rect.center = (int(self.w * 0.5 + dx), int(cy + dy))
         self.draw_symbol(surface, name, draw_rect)
 
+        if hasattr(self.fx, "is_exit_active") and self.fx.is_exit_active() and self.exit_dir_pos:
+            t = self.fx.exit_progress()
+            eased2 = self._ease_out_cubic(t)
+
+            # wektor kierunku zjazdu (od środka ku pozycji na ringu)
+            dir_vec = {
+                "RIGHT": (1, 0), "LEFT": (-1, 0), "TOP": (0, -1), "BOTTOM": (0, 1)
+            }.get(self.exit_dir_pos, (0, 0))
+
+            slide_dist = int(self.w * 0.35)  # jak daleko wypadamy poza ekran
+            offx = int(dir_vec[0] * slide_dist * eased2)
+            offy = int(dir_vec[1] * slide_dist * eased2)
+
+            # fade out wraz z ruchem
+            alpha = int(255 * (1.0 - eased2))
+
+            symbol_layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+            self.draw_symbol(symbol_layer, name, draw_rect.move(offx, offy))
+            # nałóż alpha
+            alpha_tint = pygame.Surface(symbol_layer.get_size(), pygame.SRCALPHA)
+            alpha_tint.fill((255, 255, 255, alpha))
+            symbol_layer.blit(alpha_tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            surface.blit(symbol_layer, (0, 0))
+            return  # nie rysuj wersji „spawn” drugi raz
+
     def _draw_gameplay(self):
         self._blit_bg()
         self._draw_hud()
 
-        if self.target:
-            base_rect = pygame.Rect(0, 0, self.w * SYMBOL_BASE_SIZE_FACTOR, self.w * SYMBOL_BASE_SIZE_FACTOR)
-            base_rect.center = (self.w * 0.5, self.h * 0.5)
+        # bazowy prostokąt pod symbol w centrum (zawsze liczony)
+        base_size = int(self.w * SYMBOL_BASE_SIZE_FACTOR)
+        base_rect = pygame.Rect(0, 0, base_size, base_size)
+        base_rect.center = (int(self.w * 0.5), int(self.h * 0.5))
 
-            # ring dookoła symbolu (bez podświetleń)
-            self._draw_input_ring(base_rect.center, base_rect.width)
+        # ring dookoła symbolu
+        self._draw_input_ring(base_rect.center, base_rect.width)
 
-            # symbol centralny
-            self._draw_spawn_animation(self.screen, self.target, base_rect)
+        # jeśli trwa/just-ended exit-slide, NIE rysujemy centralnego symbolu
+        if self.exit_dir_pos:
+            if self.fx.is_exit_active() and self.fx.exit_symbol:
+                # progres + easing
+                t = self.fx.exit_progress()
+                eased = t * t  # lekki ease-in
 
+                # wektor docelowy (pozycja symbolu na ringu)
+                cx, cy = base_rect.center
+                r = int(base_rect.width * RING_RADIUS_FACTOR)
+                target_xy = {
+                    "TOP":    (cx, cy - r),
+                    "RIGHT":  (cx + r, cy),
+                    "LEFT":   (cx - r, cy),
+                    "BOTTOM": (cx, cy + r),
+                }[self.exit_dir_pos]
+
+                # idź trochę ZA ikonę na ringu, żeby ładnie „zniknął”
+                tx = int(cx + (target_xy[0] - cx) * 1.2 * eased)
+                ty = int(cy + (target_xy[1] - cy) * 1.2 * eased)
+
+                # shrink + fade
+                scale = (1.0 - 0.25 * eased) * self.fx.pulse_scale('symbol')
+                size = max(1, int(self.w * SYMBOL_BASE_SIZE_FACTOR * scale))
+                rect = pygame.Rect(0, 0, size, size)
+                rect.center = (tx, ty)
+
+                tmp = pygame.Surface((size, size), pygame.SRCALPHA)
+                self.draw_symbol(tmp, self.fx.exit_symbol, tmp.get_rect())
+                tmp.set_alpha(int(255 * (1.0 - t)))
+                self.screen.blit(tmp, rect.topleft)
+            else:
+                # exit już się skończył, ale nowy target jeszcze nie powstał → nie rysuj nic w centrum
+                pass
+        else:
+            # zwykła animacja pojawienia (tylko jeśli jest target)
+            if self.target:
+                self._draw_spawn_animation(self.screen, self.target, base_rect)
+
+        # przypięty baner reguły, jeśli aktywny mapping i nie trwa animacja banera
         if self.rules.current_mapping and not self.banner.is_active(self.now()):
             self._draw_rule_banner_pinned()
 
@@ -2203,7 +2374,9 @@ class Game:
         self.screen.blit(final_surface, (0, 0))
         pygame.display.flip()
 
+
 # ============================== MAIN LOOP ============================== #
+
 
 def main():
     """Program entry. Sets up window, game object, GPIO (optional) and the loop."""
