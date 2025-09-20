@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 import pygame
 
@@ -444,11 +444,19 @@ class Scene(Enum):
     SETTINGS = auto()
     INSTRUCTION = auto()
 
+class RuleType(Enum):
+    MAPPING = auto()   # „A ⇒ B” (baner NEW RULE)
+
+@dataclass
+class RuleSpec:
+    type: RuleType
+    banner_on_level_start: bool = False
+    periodic_every_hits: int = 0  
+
 @dataclass
 class LevelCfg:
     id: int
-    enable_rules: bool = False
-    show_rule_banner: bool = False
+    rules: List[RuleSpec] = None  
     rotations_per_level: int = 0           # ile rotacji w ramach poziomu (w tym jedna na starcie – patrz apply_level)
     memory_mode: bool = False              # L5: po intro ring znika
     memory_intro_sec: float = 3.0          # ile sekund podglądu układu ringu przy starcie memory (nadpisywalne)
@@ -457,17 +465,32 @@ class LevelCfg:
     score_color: Tuple[int,int,int] = SCORE_VALUE_COLOR
 
 LEVELS: Dict[int, LevelCfg] = {
-    1: LevelCfg(1, enable_rules=False, show_rule_banner=False, rotations_per_level=0,
-                instruction="Level 1 — Classic\nOdpowiadaj poprawnie.", score_color=(235,235,235)),
-    2: LevelCfg(2, enable_rules=True,  show_rule_banner=True,  rotations_per_level=0,
-                instruction="Level 2 — New Rule\nZwracaj uwagę na baner.", score_color=(60,200,120)),
-    3: LevelCfg(3, enable_rules=False, show_rule_banner=False, rotations_per_level=3,
-                instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie."),
-    4: LevelCfg(4, enable_rules=True,  show_rule_banner=True,  rotations_per_level=3,
-                instruction="Level 4 — Mix\nReguły + rotacje."),
-    5: LevelCfg(5, enable_rules=False, show_rule_banner=False, rotations_per_level=1,
-                memory_mode=True, memory_intro_sec=3.0,
-                instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną."),
+    1: LevelCfg(1,
+        rules=[],
+        instruction="Level 1 — Classic\nOdpowiadaj poprawnie.",
+        score_color=(235,235,235)
+    ),
+    2: LevelCfg(2,
+        rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
+        instruction="Level 2 — New Rule\nZwracaj uwagę na baner.",
+        score_color=(60,200,120)
+    ),
+    3: LevelCfg(3,
+        rules=[],  # tylko rotacje, BEZ banera i BEZ mappingu
+        rotations_per_level=3,
+        instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie."
+    ),
+    4: LevelCfg(4,
+        rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
+        rotations_per_level=3,
+        instruction="Level 4 — Mix\nReguły + rotacje."
+    ),
+    5: LevelCfg(5,
+        rules=[],  # memory bez mappingu
+        rotations_per_level=1,
+        memory_mode=True, memory_intro_sec=3.0,
+        instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną."
+    ),
 }
 
 # ========= GAME =========
@@ -530,7 +553,6 @@ class Game:
         self.target_time = TARGET_TIME_INITIAL
         self.hits_since_rule = 0
 
-        self.rule: Optional[Tuple[str, str]] = None
         self.rule_banner_from_pinned = False
         self.rule_banner_until = 0.0
         self.rule_banner_anim_start = 0.0
@@ -543,6 +565,11 @@ class Game:
         self.time_left = TIMED_DURATION
         self._last_tick = 0.0
         self.highscore = int(CFG.get("highscore", 0))
+
+        # --- rules ---
+        self.active_rules: dict[RuleType, RuleSpec] = {}
+        self.current_mapping: Optional[Tuple[str, str]] = None
+        self.mapping_every_hits: int = 0  # wygodna kopia z RuleSpec (0 = brak cyklicznego odświeżania)
 
         # --- level cfg / ring state ---
         self.level_cfg: LevelCfg = LEVELS[1]
@@ -1068,7 +1095,6 @@ class Game:
         self.target_deadline = None
         self.target_time = float(self.settings.get("target_time_initial", TARGET_TIME_INITIAL))
         self.hits_since_rule = 0
-        self.rule = None
         self.rule_banner_until = 0.0
         self.symbol_spawn_time = 0.0
         self.pause_start = 0.0
@@ -1099,6 +1125,17 @@ class Game:
             self.memory_intro_until = self.now() + float(self.level_cfg.memory_intro_sec or 0.0)
         self.new_target()
 
+        # 1) Zainstaluj reguły z LevelCfg
+        for spec in (self.level_cfg.rules or []):
+            self.active_rules[spec.type] = spec
+            if spec.type is RuleType.MAPPING:
+                self.mapping_every_hits = int(spec.periodic_every_hits or 0)
+
+        # 2) Jeśli MAPPING ma baner na starcie – losuj i pokaż TERAZ
+        mapping_spec = self.active_rules.get(RuleType.MAPPING)
+        if mapping_spec and mapping_spec.banner_on_level_start:
+            self._roll_mapping_rule(show_banner=True)
+
     def end_game(self) -> None:
         self.scene = Scene.OVER
         if self.score > self.highscore:
@@ -1124,16 +1161,15 @@ class Game:
             self.hits_in_level = 0
             self.hits_since_rule = 0
             self.apply_level(self.level)
-            # jeśli poziom ma rules + baner, można od razu wylosować pierwszą regułę
-            if self.level_cfg.enable_rules and self.level_cfg.show_rule_banner:
-                self.roll_rule()
 
     def apply_level(self, lvl: int) -> None:
         # wybór cfg
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
 
-        # kolor wyniku
-        # (level_value_color() już to odczyta)
+        # wyczyść reguły z poprzedniego levelu
+        self.active_rules.clear()
+        self.current_mapping = None
+        self.mapping_every_hits = 0
 
         # reset planu rotacji
         self._plan_rotations_for_level()
@@ -1157,29 +1193,35 @@ class Game:
             self.memory_show_icons = True
             self.memory_intro_until = 0.0  # ustawimy po wejściu do GAME
 
-    def roll_rule(self) -> None:
-        was_pinned = self.rule is not None and self.now() >= self.rule_banner_until
+    def _roll_mapping_rule(self, show_banner: bool) -> None:
+        # wylosuj parę A→B różną od poprzedniej
         a = random.choice(SYMS)
-        b = random.choice([s for s in SYMS if s != a])
-        if self.rule == (a, b):
+        b_choices = [s for s in SYMS if s != a]
+        b = random.choice(b_choices)
+        if self.current_mapping == (a, b):
             b = random.choice([s for s in SYMS if s not in (a, b)])
-        self.rule = (a, b)
+        self.current_mapping = (a, b)
 
-        if self.level_cfg.show_rule_banner:
-            now = self.now()
-            self.rule_banner_from_pinned = was_pinned
-            self.rule_banner_anim_start = now
-            self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
-            self.pause_start = now
-            self.pause_until = self.rule_banner_until
-            if self.mode is Mode.TIMED:
-                self.time_left += ADDITIONAL_RULE_TIME
-        else:
+        if not show_banner:
+            # bez banera – tylko odśwież mapping
             self.rule_banner_until = 0.0
             self.rule_banner_from_pinned = False
+            return
+
+        # baner odpalany TERAZ (jesteśmy już w GAME, po instrukcji)
+        now = self.now()
+        self.rule_banner_from_pinned = (self.current_mapping is not None and self.now() >= self.rule_banner_until)
+        self.rule_banner_anim_start = now
+        self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
+        self.pause_start = now
+        self.pause_until = self.rule_banner_until
+        if self.mode is Mode.TIMED:
+            self.time_left += ADDITIONAL_RULE_TIME
 
     def apply_rule(self, stimulus: str) -> str:
-        return self.rule[1] if (self.rule and stimulus == self.rule[0]) else stimulus
+        if self.current_mapping and stimulus == self.current_mapping[0]:
+            return self.current_mapping[1]
+        return stimulus
 
     # ----- input/update -----
     def handle_input_symbol(self, name: str) -> None:
@@ -1192,30 +1234,38 @@ class Game:
 
             self.score += 1
             self.streak += 1
+            
             if self.streak > 0 and self.streak % 10 == 0: self.trigger_streak_pulse()
             self.hits_since_rule += 1
             self.hits_in_level += 1
+            
             if self.mode is Mode.TIMED:
                 self.time_left += 1.0
+            
             if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
-            if self.level_cfg.enable_rules:
-                if self.hits_since_rule >= RULE_EVERY_HITS:
+
+            if RuleType.MAPPING in self.active_rules and self.mapping_every_hits > 0:
+                if self.hits_since_rule >= self.mapping_every_hits:
                     self.hits_since_rule = 0
-                    self.roll_rule()
+                    # odśwież mapowanie – zwykle z banerem na L2/L4 (chcesz baner przy każdym odświeżeniu? wybierz)
+                    self._roll_mapping_rule(show_banner=True)   # lub False, jeśli wolisz bez banera po pierwszym
+            
             if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
                 self._rotate_ring_random()
+            
             if self.hits_in_level >= self.level_goal:
                 self.level_up()
+                
             self.new_target()
             self.lock_until_all_released = True
             self.accept_after = self.now() + 0.12
         else:
 
             #Zla odpowiedz
-            if self.rule and self.target == self.rule[0]: self.trigger_banner_pulse()
+            if self.current_mapping and self.target == self.current_mapping[0]: self.trigger_banner_pulse()
             self.streak = 0
             self.trigger_shake()
             self.trigger_glitch()
@@ -1248,8 +1298,7 @@ class Game:
             _ = iq.pop_all()
             return
 
-        # baner reguły w trakcie gry – pauzuje wejście
-        if now < self.rule_banner_until and self.rule is not None:
+        if now < self.rule_banner_until:
             _ = iq.pop_all()
             self._last_tick = now
             return
@@ -1696,9 +1745,10 @@ class Game:
         right_rect.center = (line_left + icon_size + icon_gap + arrow_w + icon_gap + icon_size // 2, cy)
 
         # Draw rule (symbol → symbol)
-        self.draw_symbol(panel_raw, self.rule[0], left_rect)
+        left_sym, right_sym = self.current_mapping or ("TRIANGLE", "TRIANGLE")
+        self.draw_symbol(panel_raw, left_sym, left_rect)
         self.draw_arrow(panel_raw, arrow_rect)
-        self.draw_symbol(panel_raw, self.rule[1], right_rect)
+        self.draw_symbol(panel_raw, right_sym, right_rect)
 
         # Scale the complete panel + shadow
         panel = pygame.transform.smoothscale(panel_raw, (panel_w, panel_h))
@@ -1749,7 +1799,7 @@ class Game:
         self.screen.blit(panel, (panel_x, y))
 
     def _draw_rule_banner_pinned(self) -> None:
-        if not self.rule:
+        if not self.current_mapping:
             return
         panel_scale = RULE_BANNER_PIN_SCALE
         symbol_scale = RULE_SYMBOL_SCALE_PINNED
@@ -1969,7 +2019,7 @@ class Game:
     def _draw_gameplay(self):
         self._blit_bg()
         self._draw_hud()
-        if self.rule and self.now() >= self.rule_banner_until:
+        if self.current_mapping and self.now() >= self.rule_banner_until:
             self._draw_rule_banner_pinned()
         if self.target:
             base_rect = pygame.Rect(0, 0, self.w * SYMBOL_BASE_SIZE_FACTOR, self.w * SYMBOL_BASE_SIZE_FACTOR)
@@ -1987,7 +2037,7 @@ class Game:
         old_screen = self.screen
         self.screen = self.fb
         try:
-            if self.scene is Scene.GAME and self.rule and self.now() < self.rule_banner_until:
+            if self.scene is Scene.GAME and self.now() < self.rule_banner_until:
                 self._blit_bg()
                 self._draw_rule_banner_anim()
 
