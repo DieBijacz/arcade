@@ -208,7 +208,7 @@ FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
 # --- Levels --- (progresja poziomów)
 LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
 LEVEL_MAX = 5                    # maks. zdefiniowany poziom (na przyszłość)
-LEVELS_ACTIVE_FOR_NOW = 2        # faktycznie używana liczba poziomów
+LEVELS_ACTIVE_FOR_NOW = 5        # faktycznie używana liczba poziomów
 
 LEVEL_COLORS = {                 # kolor wyniku (kapsuła) per poziom
     1: (235, 235, 235),
@@ -322,6 +322,15 @@ RING_ICON_SIZE_FACTOR = 0.44     # rozmiar ikon na ringu względem symbolu w cen
 RING_GLOW_COLOR = (255, 240, 120, 70)  # poświata pod poprawną ikoną
 RING_GLOW_RADIUS = 24
 
+# --- Ring layout (pozycje) ---
+DEFAULT_RING_LAYOUT = {
+    "TOP": "TRIANGLE",
+    "RIGHT": "CIRCLE",
+    "LEFT": "SQUARE",
+    "BOTTOM": "CROSS",
+}
+RING_POSITIONS = ["TOP", "RIGHT", "LEFT", "BOTTOM"]
+
 # --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
 MENU_TITLE_Y_FACTOR = 0.28        # pionowe położenie tytułu w MENU (proporcja wys.)
 MENU_MODE_GAP = 20                # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
@@ -433,7 +442,33 @@ class Scene(Enum):
     GAME = auto()
     OVER = auto()
     SETTINGS = auto()
+    INSTRUCTION = auto()
 
+@dataclass
+class LevelCfg:
+    id: int
+    enable_rules: bool = False
+    show_rule_banner: bool = False
+    rotations_per_level: int = 0           # ile rotacji w ramach poziomu (w tym jedna na starcie – patrz apply_level)
+    memory_mode: bool = False              # L5: po intro ring znika
+    memory_intro_sec: float = 3.0          # ile sekund podglądu układu ringu przy starcie memory (nadpisywalne)
+    instruction: str = ""                  # krótki tekst instrukcji
+    instruction_sec: float = 5.0           # ile sekund trwa ekran instrukcji
+    score_color: Tuple[int,int,int] = SCORE_VALUE_COLOR
+
+LEVELS: Dict[int, LevelCfg] = {
+    1: LevelCfg(1, enable_rules=False, show_rule_banner=False, rotations_per_level=0,
+                instruction="Level 1 — Classic\nOdpowiadaj poprawnie.", score_color=(235,235,235)),
+    2: LevelCfg(2, enable_rules=True,  show_rule_banner=True,  rotations_per_level=0,
+                instruction="Level 2 — New Rule\nZwracaj uwagę na baner.", score_color=(60,200,120)),
+    3: LevelCfg(3, enable_rules=False, show_rule_banner=False, rotations_per_level=3,
+                instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie."),
+    4: LevelCfg(4, enable_rules=True,  show_rule_banner=True,  rotations_per_level=3,
+                instruction="Level 4 — Mix\nReguły + rotacje."),
+    5: LevelCfg(5, enable_rules=False, show_rule_banner=False, rotations_per_level=1,
+                memory_mode=True, memory_intro_sec=3.0,
+                instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną."),
+}
 
 # ========= GAME =========
 
@@ -508,6 +543,33 @@ class Game:
         self.time_left = TIMED_DURATION
         self._last_tick = 0.0
         self.highscore = int(CFG.get("highscore", 0))
+
+        # --- level cfg / ring state ---
+        self.level_cfg: LevelCfg = LEVELS[1]
+
+        # ring: pos -> symbol (dynamiczny)
+        self.ring_layout = dict(DEFAULT_RING_LAYOUT)
+
+        # klawisze mapują do POZYCJI; symbole wynikają z ring_layout
+        self.key_to_pos = {
+            pygame.K_UP: "TOP", pygame.K_RIGHT: "RIGHT", pygame.K_LEFT: "LEFT", pygame.K_DOWN: "BOTTOM",
+            pygame.K_w: "TOP",  pygame.K_d: "RIGHT",     pygame.K_a: "LEFT",   pygame.K_s: "BOTTOM",
+        }
+        self.keymap_current: Dict[int, str] = {}
+        self._recompute_keymap()
+
+        # rotacje w obrębie poziomu
+        self.rotation_breaks: set[int] = set()  # np. {5, 10} dla 15 hitów
+        self.did_start_rotation = False         # pierwsza rotacja „na start poziomu” wykonana?
+
+        # instrukcja między levelami
+        self.instruction_until = 0.0
+        self.instruction_text = ""
+        self.allow_skip_instruction = True
+
+        # memory (L5)
+        self.memory_show_icons = True          # czy rysować ikony na ringu
+        self.memory_intro_until = 0.0          # kiedy zakończyć podgląd układu
 
         # pulse states
         self.symbol_pulse_start = 0.0
@@ -591,6 +653,9 @@ class Game:
         self._rescale_background()
         self._ensure_framebuffer()
         self._rebuild_fonts() 
+
+    def _recompute_keymap(self) -> None:
+        self.keymap_current = {k: self.ring_layout[pos] for k, pos in self.key_to_pos.items()}
 
     def _build_rule_fonts(self) -> None:
         c = int(CFG["rules"].get("banner_font_center", 64))
@@ -1011,14 +1076,27 @@ class Game:
         self.time_left = TIMED_DURATION
         self._last_tick = self.now()
 
+        # ring / remap reset
+        self.ring_layout = dict(DEFAULT_RING_LAYOUT)
+        self._recompute_keymap()
+
+        # level 1 config + instrukcja
+        self.apply_level(1)
+
     def start_game(self) -> None:
-        self.scene = Scene.GAME
         self.reset_game_state()
         self._ensure_music()
-        if self.mode is Mode.TIMED:
-            self._last_tick = self.now()
         if self.music_ok:
             pygame.mixer.music.play(-1)
+
+    def _enter_gameplay_after_instruction(self) -> None:
+        self.scene = Scene.GAME
+        if self.mode is Mode.TIMED:
+            self._last_tick = self.now()
+        # memory: ustaw okno podglądu układu
+        if self.level_cfg.memory_mode:
+            self.memory_show_icons = True
+            self.memory_intro_until = self.now() + float(self.level_cfg.memory_intro_sec or 0.0)
         self.new_target()
 
     def end_game(self) -> None:
@@ -1038,33 +1116,67 @@ class Game:
         self.symbol_spawn_time = self.now()
 
     def level_value_color(self) -> Tuple[int, int, int]:
-        return LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR)
+        return getattr(self.level_cfg, "score_color", LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR))
 
     def level_up(self) -> None:
         if self.level < self.levels_active:
             self.level += 1
             self.hits_in_level = 0
             self.hits_since_rule = 0
-            if self.level == 2:
+            self.apply_level(self.level)
+            # jeśli poziom ma rules + baner, można od razu wylosować pierwszą regułę
+            if self.level_cfg.enable_rules and self.level_cfg.show_rule_banner:
                 self.roll_rule()
+
+    def apply_level(self, lvl: int) -> None:
+        # wybór cfg
+        self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
+
+        # kolor wyniku
+        # (level_value_color() już to odczyta)
+
+        # reset planu rotacji
+        self._plan_rotations_for_level()
+
+        # ustawienia memory
+        self.memory_show_icons = True
+        self.memory_intro_until = 0.0
+
+        # przygotuj ekran instrukcji
+        self.instruction_text = self.level_cfg.instruction or f"LEVEL {lvl}"
+        self.instruction_until = self.now() + float(self.level_cfg.instruction_sec or 0.0)
+        self.scene = Scene.INSTRUCTION
+
+        # natychmiastowa rotacja na starcie poziomu, jeśli przewidziane (np. L3/L4/L5)
+        if self.level_cfg.rotations_per_level > 0:
+            self._rotate_ring_random()
+            self.did_start_rotation = True
+
+        # memory: krótki podgląd układu (po instrukcji – obsłużone w update())
+        if self.level_cfg.memory_mode:
+            self.memory_show_icons = True
+            self.memory_intro_until = 0.0  # ustawimy po wejściu do GAME
 
     def roll_rule(self) -> None:
         was_pinned = self.rule is not None and self.now() >= self.rule_banner_until
         a = random.choice(SYMS)
-        b_choices = [s for s in SYMS if s != a]
-        b = random.choice(b_choices)
+        b = random.choice([s for s in SYMS if s != a])
         if self.rule == (a, b):
             b = random.choice([s for s in SYMS if s not in (a, b)])
         self.rule = (a, b)
 
-        now = self.now()
-        self.rule_banner_from_pinned = was_pinned
-        self.rule_banner_anim_start = now
-        self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
-        self.pause_start = now
-        self.pause_until = self.rule_banner_until
-        if self.mode is Mode.TIMED:
-            self.time_left += ADDITIONAL_RULE_TIME
+        if self.level_cfg.show_rule_banner:
+            now = self.now()
+            self.rule_banner_from_pinned = was_pinned
+            self.rule_banner_anim_start = now
+            self.rule_banner_until = now + RULE_BANNER_TOTAL_SEC
+            self.pause_start = now
+            self.pause_until = self.rule_banner_until
+            if self.mode is Mode.TIMED:
+                self.time_left += ADDITIONAL_RULE_TIME
+        else:
+            self.rule_banner_until = 0.0
+            self.rule_banner_from_pinned = False
 
     def apply_rule(self, stimulus: str) -> str:
         return self.rule[1] if (self.rule and stimulus == self.rule[0]) else stimulus
@@ -1089,9 +1201,12 @@ class Game:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
-            if self.level >= 2 and self.hits_since_rule >= RULE_EVERY_HITS:
-                self.hits_since_rule = 0
-                self.roll_rule()
+            if self.level_cfg.enable_rules:
+                if self.hits_since_rule >= RULE_EVERY_HITS:
+                    self.hits_since_rule = 0
+                    self.roll_rule()
+            if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
+                self._rotate_ring_random()
             if self.hits_in_level >= self.level_goal:
                 self.level_up()
             self.new_target()
@@ -1118,16 +1233,28 @@ class Game:
         now = self.now()
         self._maybe_start_text_glitch()
 
+        # debounce
         if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
             self.lock_until_all_released = False
 
-        if self.scene is not Scene.GAME:
-            _ = iq.pop_all()  # keep queue fresh when not gaming
+        # INSTRUKCJA: czekamy do końca timera albo na skip
+        if self.scene is Scene.INSTRUCTION:
+            _ = iq.pop_all()
+            if now >= self.instruction_until:
+                self._enter_gameplay_after_instruction()
             return
+
+        if self.scene is not Scene.GAME:
+            _ = iq.pop_all()
+            return
+
+        # baner reguły w trakcie gry – pauzuje wejście
         if now < self.rule_banner_until and self.rule is not None:
             _ = iq.pop_all()
             self._last_tick = now
             return
+
+        # „odkorkuj” po pauzie
         if self.pause_until and now >= self.pause_until:
             paused = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
             self.pause_start = 0.0
@@ -1135,6 +1262,8 @@ class Game:
             if self.target_deadline is not None:
                 self.target_deadline += paused
             self._last_tick = now
+
+        # TIMED: upływ czasu
         if self.mode is Mode.TIMED:
             dt = max(0.0, now - (self._last_tick or now))
             self.time_left -= dt
@@ -1143,12 +1272,10 @@ class Game:
                 self.time_left = 0.0
                 self.end_game()
                 return
-        if (
-            self.mode is Mode.SPEEDUP
-            and self.target is not None
-            and self.target_deadline is not None
-            and now > self.target_deadline
-        ):
+
+        # SPEEDUP: timeout targetu
+        if (self.mode is Mode.SPEEDUP and self.target is not None and
+            self.target_deadline is not None and now > self.target_deadline):
             if self.lives_enabled():
                 self.lives -= 1
             self.streak = 0
@@ -1157,6 +1284,13 @@ class Game:
                 self.end_game()
                 return
             self.new_target()
+
+        # MEMORY: po krótkim podglądzie układu schowaj ikony
+        if self.level_cfg.memory_mode and self.memory_show_icons and self.memory_intro_until > 0.0:
+            if now >= self.memory_intro_until:
+                self.memory_show_icons = False
+
+        # wejścia gracza
         for n in iq.pop_all():
             self.handle_input_symbol(n)
 
@@ -1264,28 +1398,52 @@ class Game:
         surf.blit(rr, rect.topleft)
 
     def _draw_input_ring(self, center: tuple[int, int], base_size: int) -> None:
-        """Ring z ikonami: TRIANGLE (góra), CIRCLE (prawa), SQUARE (lewa), CROSS (dół)."""
         cx, cy = center
         r = int(base_size * RING_RADIUS_FACTOR)
 
-        # ring (okrąg)
+        # ring
         surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
         pygame.draw.circle(surf, RING_COLOR, (cx, cy), r, RING_THICKNESS)
         self.screen.blit(surf, (0, 0))
 
-        # pozycje ikon
-        pos = {
-            "TRIANGLE": (cx, cy - r),   # top
-            "CIRCLE":   (cx + r, cy),   # right
-            "SQUARE":   (cx - r, cy),   # left
-            "CROSS":    (cx, cy + r),   # bottom
+        pos_xy = {
+            "TOP":    (cx, cy - r),
+            "RIGHT":  (cx + r, cy),
+            "LEFT":   (cx - r, cy),
+            "BOTTOM": (cx, cy + r),
         }
         icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
 
-        for name, (ix, iy) in pos.items():
+        # jeśli memory i ikony mają być ukryte – nic nie rysujemy na ringu
+        if self.level_cfg.memory_mode and not self.memory_show_icons:
+            return
+
+        for pos, (ix, iy) in pos_xy.items():
+            name = self.ring_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
             rect = pygame.Rect(0, 0, icon_size, icon_size)
             rect.center = (ix, iy)
             self.draw_symbol(self.screen, name, rect)
+
+    def _rotate_ring_random(self) -> None:
+        current = [self.ring_layout[p] for p in RING_POSITIONS]
+        symbols = list(SYMS)
+        while True:
+            random.shuffle(symbols)
+            if symbols != current:
+                break
+        for p, s in zip(RING_POSITIONS, symbols):
+            self.ring_layout[p] = s
+        self._recompute_keymap()
+        self.trigger_glitch(mag=0.6)  # czytelny efekt zmiany
+
+    def _plan_rotations_for_level(self) -> None:
+        self.rotation_breaks = set()
+        self.did_start_rotation = False
+        N = self.level_cfg.rotations_per_level
+        if N > 0:
+            seg = max(1, self.level_goal // N)   # np. 15//3 = 5 → progi po 5 i 10 (startowa rotacja robiona osobno)
+            for i in range(1, N):                # „w trakcie”
+                self.rotation_breaks.add(i * seg)
 
     def _draw_label_value_vstack(self, *, label: str, value: str, left: bool, anchor_rect: pygame.Rect) -> None:
         label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
@@ -1678,12 +1836,18 @@ class Game:
                     self.settings_adjust(+1); return
                 if event.key == pygame.K_r:
                     self.settings_reset_highscore(); return
+            
+            elif self.scene is Scene.INSTRUCTION:
+                # ENTER lub dowolny klawisz akcji = skip
+                if event.key in (pygame.K_RETURN, pygame.K_SPACE) or event.key in self.key_to_pos:
+                    self.instruction_until = 0.0  # natychmiast przejdź do gry
+                    return
 
             # mark key as down for debouncing
             self.keys_down.add(event.key)
 
             # translate to a game symbol if present in keymap
-            name = keymap.get(event.key)
+            name = self.keymap_current.get(event.key)
             if name:
                 # basic key lock to prevent accidental multi-presses
                 if self.lock_until_all_released or self.now() < getattr(self, "accept_after", 0.0):
@@ -1900,6 +2064,20 @@ class Game:
                 w2, h2 = self.font.size(help2)
                 self.draw_text(self.font, help1, (self.w / 2 - w1 / 2, y + help_margin))
                 self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, y + help_margin + h1 + help_gap))
+            
+            elif self.scene is Scene.INSTRUCTION:
+                self._blit_bg()
+                lines = (self.instruction_text or f"LEVEL {self.level}").splitlines()
+                y = self.h * 0.30
+                for i, L in enumerate(lines):
+                    f = self.big if i == 0 else self.mid
+                    tw, th = f.size(L)
+                    self.draw_text(f, L, (self.w/2 - tw/2, y))
+                    y += th + self.px(10)
+                hint = "ENTER/SPACE = start"
+                hw, hh = self.font.size(hint)
+                self.draw_text(self.font, hint, (self.w/2 - hw/2, y + self.px(24)), color=ACCENT)
+
         finally:
             self.screen = old_screen
 
