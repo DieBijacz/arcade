@@ -14,9 +14,9 @@
     ]
   },
   "speedup": {
-    "target_time_initial": 9.99999999999998,
+    "target_time_initial": 4.999999999999997,
     "target_time_min": 0.45,
-    "target_time_step": -0.09999999999999999
+    "target_time_step": -0.20000000000000004
   },
   "timed": {
     "duration": 60.0,
@@ -31,7 +31,8 @@
   "lives": 3,
   "audio": {
     "music": "assets/music.ogg",
-    "volume": 0.5
+    "music_volume": 0.30000000000000004,
+    "sfx_volume": 0.2999999999999999
   },
   "effects": {
     "glitch_enabled": true
@@ -47,7 +48,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 35,
+  "highscore": 7,
   "levels": {
     "1": {
       "hits": 15,

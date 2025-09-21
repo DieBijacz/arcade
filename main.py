@@ -22,7 +22,11 @@ DEFAULT_CFG = {
     "timed": {"duration": 60.0, "rule_bonus": 5.0},
     "rules": {"every_hits": 10, "banner_sec": 2.0, "banner_font_center": 64, "banner_font_pinned": 40},
     "lives": 3,
-    "audio": {"music": "assets/music.ogg", "volume": 0.5},
+        "audio": {
+        "music": "assets/music.ogg",
+        "music_volume": 0.5, 
+        "sfx_volume": 0.8
+    },
     "effects": {"glitch_enabled": True},
     "ui": {"ring_palette": "auto"},
     "images": {
@@ -51,13 +55,17 @@ def _merge(dst: dict, src: dict) -> dict:
 
 def _sanitize_cfg(cfg: dict) -> dict:
     """Clamp user config into safe/expected ranges."""
+
     s = cfg["speedup"]
     s["target_time_initial"] = float(max(0.2, min(10.0, s["target_time_initial"])))
     s["target_time_min"] = float(max(0.1, min(s["target_time_initial"], s["target_time_min"])))
     s["target_time_step"] = float(max(-1.0, min(1.0, s["target_time_step"])))
 
+    a = cfg.setdefault("audio", {})
+    a["music_volume"] = float(max(0.0, min(1.0, a.get("music_volume", 0.5))))
+    a["sfx_volume"]   = float(max(0.0, min(1.0, a.get("sfx_volume",   0.8))))
+    
     cfg["lives"] = int(max(0, min(9, cfg["lives"])))
-    cfg["audio"]["volume"] = float(max(0.0, min(1.0, cfg["audio"]["volume"])))
 
     if "fps" in cfg["display"]:
         cfg["display"]["fps"] = int(max(30, min(240, cfg["display"]["fps"])))
@@ -279,9 +287,26 @@ SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15  # promień poświaty względem symbolu
 
 EXIT_SLIDE_SEC = 0.18   # szybki „zjazd” po poprawnej odpowiedzi
 
-# --- Pulse ---
-PULSE_DURATION = 0.30           # ~0.3 s
-PULSE_MAX_SCALE = 1.18          # ile maksymalnie powiększamy
+# --- Pulse (FX) ---
+# Baza + per-element modyfikatory (łatwe strojenie intensywności z jednego miejsca)
+PULSE_BASE_DURATION = 0.30        # ogólna długość pulsu (s)
+PULSE_BASE_MAX_SCALE = 1.18       # ogólny maks. scale (1.0 = brak)
+
+# mnożniki skali względem bazy (1.0 = taki sam jak baza)
+PULSE_KIND_SCALE = {
+    "symbol": 1.00,    # puls centralnego symbolu (połowa czasu na reakcję)
+    "streak": 1.06,    # puls licznika streak co X trafień
+    "banner": 1.04,    # delikatny puls banera gdy „trafisz pod mapping”
+    "score":  1.10,    # NOWE: puls liczby SCORE po zdobyciu punktu
+}
+
+# czas trwania per-element (jeśli nie podasz, użyje PULSE_BASE_DURATION)
+PULSE_KIND_DURATION = {
+    "symbol": 0.30,
+    "streak": 0.30,
+    "banner": 0.30,
+    "score":  0.26,
+}
 
 # --- Timer bar (bottom) --- (pasek czasu na dole ekranu)
 TIMER_BAR_WIDTH_FACTOR = 0.66     # szerokość paska względem szerokości okna
@@ -671,7 +696,7 @@ class EffectsManager:
         self.next_text_glitch_at = self.now() + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
 
         # pulses
-        self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0) }
+        self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0) }
 
         # exit slide (po poprawnej odpowiedzi)
         self.exit_active = False
@@ -726,30 +751,36 @@ class EffectsManager:
     def is_text_glitch_active(self) -> bool:
         return self.enabled and (self.now() < self.text_glitch_active_until)
 
-    def trigger_pulse(self, kind: str, duration: float = PULSE_DURATION):
-        if kind not in self._pulses: return
+    def trigger_pulse(self, kind: str, duration: float | None = None):
+        if kind not in self._pulses:
+            return
+        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get(kind, PULSE_BASE_DURATION))
         now = self.now()
-        self._pulses[kind] = (now, now + max(1e-3, duration))
+        self._pulses[kind] = (now, now + max(1e-3, dur))
 
     def trigger_pulse_symbol(self): self.trigger_pulse('symbol')
     def trigger_pulse_streak(self): self.trigger_pulse('streak')
     def trigger_pulse_banner(self): self.trigger_pulse('banner')
 
     # -------- queries / math --------
-    def _pulse_curve01(self, t: float) -> float:
-        # 0→1→0 (sinus), podnosimy do [1, PULSE_MAX_SCALE]
+    def _pulse_curve01(self, t: float, kind: str) -> float:
         import math
         t = max(0.0, min(1.0, t))
-        return 1.0 + (PULSE_MAX_SCALE - 1.0) * math.sin(math.pi * t)
+        # skala = baza * mnożnik kind
+        kscale = float(PULSE_KIND_SCALE.get(kind, 1.0))
+        max_scale = float(PULSE_BASE_MAX_SCALE) * kscale
+        return 1.0 + (max_scale - 1.0) * math.sin(math.pi * t)
 
     def pulse_scale(self, kind: str) -> float:
         start, until = self._pulses.get(kind, (0.0, 0.0))
-        if start <= 0.0: return 1.0
+        if start <= 0.0:
+            return 1.0
         now = self.now()
-        if now >= until: return 1.0
+        if now >= until:
+            return 1.0
         dur = max(1e-6, until - start)
         t = (now - start) / dur
-        return self._pulse_curve01(t)
+        return self._pulse_curve01(t, kind)
     
     def is_pulse_active(self, kind: str) -> bool:
         start, until = self._pulses.get(kind, (0.0, 0.0))
@@ -758,6 +789,8 @@ class EffectsManager:
     def stop_pulse(self, kind: str):
         if kind in self._pulses:
             self._pulses[kind] = (0.0, 0.0)
+
+    def trigger_pulse_score(self): self.trigger_pulse('score')
 
     def shake_offset(self, screen_w: int) -> tuple[float, float]:
         import math
@@ -970,10 +1003,10 @@ class Game:
             "target_time_min": float(CFG["speedup"]["target_time_min"]),
             "lives": int(CFG["lives"]),
             "glitch_enabled": bool(CFG.get("effects", {}).get("glitch_enabled", True)),
-            "volume": float(CFG["audio"]["volume"]),
+            "music_volume": float(CFG["audio"]["music_volume"]),
+            "sfx_volume":   float(CFG["audio"]["sfx_volume"]),
             "fullscreen": bool(CFG["display"]["fullscreen"]),
             "timed_rule_bonus": float(CFG["timed"].get("rule_bonus", 5.0)),
-            # expose banner fonts in settings so they can be tweaked live
             "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
             "rule_font_pinned": int(CFG["rules"].get("banner_font_pinned", 40)),
             "ring_palette": str(CFG.get("ui", {}).get("ring_palette", "auto")),
@@ -986,6 +1019,21 @@ class Game:
         # music
         self.music_ok = False
         self._ensure_music()
+
+        # --- SFX ---
+        self.sfx = {}
+        try:
+            self.sfx["point"]  = pygame.mixer.Sound("assets/sfx/sfx_point.wav")
+            self.sfx["wrong"]  = pygame.mixer.Sound("assets/sfx/sfx_wrong.wav")
+            self.sfx["glitch"] = pygame.mixer.Sound("assets/sfx/sfx_glitch.wav")
+
+            # USTAWIENIE GŁOŚNOŚCI SFX (to o co pytasz)
+            sfx_vol = float(CFG["audio"]["sfx_volume"])
+            for s in self.sfx.values():
+                s.set_volume(sfx_vol)
+        except Exception:
+            self.sfx = {}
+
         self.last_window_size = self.screen.get_size()
 
     def start_game(self) -> None:
@@ -1139,7 +1187,7 @@ class Game:
             pygame.mixer.init()
             if os.path.exists(CFG["audio"]["music"]):
                 pygame.mixer.music.load(CFG["audio"]["music"])
-                pygame.mixer.music.set_volume(float(CFG["audio"]["volume"]))
+                pygame.mixer.music.set_volume(float(CFG["audio"]["music_volume"]))
                 self.music_ok = True
         except Exception:
             self.music_ok = False
@@ -1221,7 +1269,8 @@ class Game:
             ("Time step", f"{self.settings['target_time_step']:+.2f}s/hit", "target_time_step"),
             ("Minimum time", f"{self.settings['target_time_min']:.2f}s", "target_time_min"),
             ("Lives", f"{int(self.settings['lives'])}", "lives"),
-            ("Volume", f"{self.settings['volume']:.2f}", "volume"),
+            ("Music volume", f"{self.settings['music_volume']:.2f}", "music_volume"),
+            ("SFX volume",   f"{self.settings['sfx_volume']:.2f}",   "sfx_volume"),
             ("Fullscreen", "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
             ("Glitch", "ON" if self.settings.get('glitch_enabled', True) else "OFF", "glitch_enabled"),
             ("Ring palette", f"{self.settings['ring_palette']}", "ring_palette"),
@@ -1286,7 +1335,8 @@ class Game:
         s["target_time_min"] = max(0.1, min(float(s["target_time_initial"]), float(s.get("target_time_min", 0.45))))
         s["target_time_step"] = max(-1.0, min(1.0, float(s.get("target_time_step", -0.03))))
         s["lives"] = max(0, min(9, int(s.get("lives", 3))))
-        s["volume"] = max(0.0, min(1.0, float(s.get("volume", 0.5))))
+        s["music_volume"] = max(0.0, min(1.0, float(s.get("music_volume", 0.5))))
+        s["sfx_volume"]   = max(0.0, min(1.0, float(s.get("sfx_volume",   0.8))))
         s["timed_rule_bonus"] = max(0.0, min(30.0, float(s.get("timed_rule_bonus", 5.0))))
         s["rule_font_center"] = max(8, min(200, int(s.get("rule_font_center", 64))))
         s["rule_font_pinned"] = max(8, min(200, int(s.get("rule_font_pinned", 40))))
@@ -1351,19 +1401,33 @@ class Game:
             "target_time_step": 0.01,
             "target_time_min": 0.05,
             "lives": 1,
-            "volume": 0.05,
+            "music_volume": 0.05,
+            "sfx_volume": 0.05,
             "timed_rule_bonus": 0.5,
             "rule_font_center": 2,
             "rule_font_pinned": 2,
         }.get(key, 0.0)
+
         if step == 0.0:
             return
 
         cur = self.settings[key]
         self.settings[key] = (cur + (step * delta)) if isinstance(cur, float) else (cur + delta)
         self._settings_clamp()
-        if key == "volume" and self.music_ok:
-            pygame.mixer.music.set_volume(float(self.settings["volume"]))
+
+        if key == "music_volume" and self.music_ok:
+            pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
+
+        elif key == "sfx_volume":
+            v = float(self.settings["sfx_volume"])
+            for s in getattr(self, "sfx", {}).values():
+                s.set_volume(v)
+            # opcjonalny odsłuch:
+            try:
+                if self.sfx.get("point"):
+                    self.sfx["point"].play()
+            except Exception:
+                pass
 
     def settings_reset_highscore(self) -> None:
         self.highscore = 0
@@ -1378,7 +1442,8 @@ class Game:
             "target_time_min": float(CFG["speedup"]["target_time_min"]),
             "lives": int(CFG["lives"]),
             "glitch_enabled": bool(CFG.get("effects", {}).get("glitch_enabled", True)),
-            "volume": float(CFG["audio"]["volume"]),
+            "music_volume": float(CFG["audio"]["music_volume"]),
+            "sfx_volume":   float(CFG["audio"]["sfx_volume"]),
             "fullscreen": bool(CFG["display"]["fullscreen"]),
             "timed_rule_bonus": float(CFG["timed"].get("rule_bonus", 5.0)),
             "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
@@ -1405,7 +1470,8 @@ class Game:
         CFG["lives"] = int(s["lives"])
         CFG["effects"] = CFG.get("effects", {})
         CFG["effects"]["glitch_enabled"] = bool(s["glitch_enabled"])
-        CFG["audio"]["volume"] = float(s["volume"])
+        CFG["audio"]["music_volume"] = float(s["music_volume"])
+        CFG["audio"]["sfx_volume"]   = float(s["sfx_volume"])
         CFG["display"]["fullscreen"] = bool(s["fullscreen"])
         CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
         CFG["rules"]["banner_font_center"] = int(s["rule_font_center"]) 
@@ -1424,7 +1490,11 @@ class Game:
                 "speedup": CFG["speedup"],
                 "lives": CFG["lives"],
                 "effects": {"glitch_enabled": CFG["effects"]["glitch_enabled"]},
-                "audio": {"volume": CFG["audio"]["volume"]},
+                "audio": {
+                    "music": CFG["audio"].get("music", "assets/music.ogg"),
+                    "music_volume": CFG["audio"]["music_volume"],
+                    "sfx_volume":   CFG["audio"]["sfx_volume"],
+                },
                 "display": {
                     "fullscreen": CFG["display"]["fullscreen"],
                     "fps": CFG["display"]["fps"],
@@ -1444,7 +1514,10 @@ class Game:
         )
 
         if self.music_ok:
-            pygame.mixer.music.set_volume(float(CFG["audio"]["volume"]))
+            pygame.mixer.music.set_volume(float(CFG["audio"]["music_volume"]))
+        for sfx in getattr(self, "sfx", {}).values():
+            sfx.set_volume(float(CFG["audio"]["sfx_volume"]))
+
         self._set_display_mode(bool(CFG["display"]["fullscreen"]))
         self._build_rule_fonts()
         self.fx.trigger_glitch(mag=1.0)
@@ -1551,7 +1624,7 @@ class Game:
         self.pause_until = self.banner.active_until
         # w TIMED dodajemy bonus tylko gdy baner rzeczywiście się pokazuje
         if self.mode is Mode.TIMED:
-            self.time_left += ADDITIONAL_RULE_TIME
+            self.time_left += ADDITIONAL_RULE_TIME 
 
     def _enter_gameplay_after_instruction(self) -> None:
         self.scene = Scene.GAME
@@ -1647,9 +1720,6 @@ class Game:
             self.keys_down.discard(event.key)
             if self.lock_until_all_released and not self.keys_down and self.now() >= getattr(self, "accept_after", 0.0):
                 self.lock_until_all_released = False
-            if event.type == pygame.MOUSEWHEEL and self.scene is Scene.SETTINGS:
-                self.settings_scroll = max(0.0, self.settings_scroll - event.y * 40)
-                return
 
     def handle_input_symbol(self, name: str) -> None:
         if self.scene is not Scene.GAME or not self.target:
@@ -1667,6 +1737,8 @@ class Game:
 
             self.score += 1
             self.streak += 1
+            self.fx.trigger_pulse('score')  
+            if self.sfx.get("point"): self.sfx["point"].play()
             if self.streak > 0 and self.streak % 10 == 0:
                 self.fx.trigger_pulse_streak()
             self.hits_in_level += 1
@@ -1719,6 +1791,7 @@ class Game:
 
             #Zla odpowiedz
 
+            if self.sfx.get("wrong"):  self.sfx["wrong"].play()
 
             if self.rules.current_mapping and self.target == self.rules.current_mapping[0]:
                 self.fx.trigger_pulse_banner()
@@ -2305,13 +2378,28 @@ class Game:
             border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
         )
         label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
-        value_surf = self.score_value_font.render(str(self.score), True, self.level_value_color())
+        raw_value_surf = self.score_value_font.render(str(self.score), True, self.level_value_color())
+
         gap = 2
+
+        # przygotuj skalowaną wartość (pulse na 'score')
+        scale = self.fx.pulse_scale('score')
+        if scale != 1.0:
+            vw, vh = raw_value_surf.get_size()
+            sw, sh = max(1, int(vw * scale)), max(1, int(vh * scale))
+            value_surf = pygame.transform.smoothscale(raw_value_surf, (sw, sh))
+        else:
+            value_surf = raw_value_surf
+
         total_h = label_surf.get_height() + gap + value_surf.get_height()
+
         lx = cap.centerx - label_surf.get_width() // 2
-        vx = cap.centerx - value_surf.get_width() // 2
         ly = cap.centery - total_h // 2
+
+        vx = cap.centerx - value_surf.get_width() // 2
         vy = ly + label_surf.get_height() + gap
+
+        # subtelny cień + tekst
         self.screen.blit(label_surf, (lx + 1, ly + 1))
         self.screen.blit(value_surf, (vx + 1, vy + 1))
         self.screen.blit(label_surf, (lx, ly))
@@ -2477,12 +2565,6 @@ class Game:
 
         # złożenie
         for L in layers: blit_center(L)
-
-        # --- Cienki outline, żeby ring był ostrzejszy ---
-        # (cx, cy, r) są zdefiniowane wyżej w tej funkcji.
-        if r > 2:  # zabezpieczenie, gdy ring jest bardzo mały
-            pygame.draw.circle(self.screen, (*base, 255), (cx, cy), r + 1, 1)
-            pygame.draw.circle(self.screen, (*base, 255), (cx, cy), r - 1, 1)
 
         # --- Ikony na ringu (ukrywane w memory) ---
         if self.level_cfg.memory_mode and not self.memory_show_icons:
