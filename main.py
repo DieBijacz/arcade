@@ -330,9 +330,13 @@ MEMORY_HIDE_AFTER_MOVES = 4      # po ilu ruchach znikają ikony
 MEMORY_HIDE_AFTER_SEC   = 5.0    # po ilu sekundach znikają ikony
 
 # --- Input Ring (wokół symbolu celu)
-RING_RADIUS_FACTOR = 1        # promień ringu jako ułamek rozmiaru docelowego symbolu
+RING_RADIUS_FACTOR = 1           # promień ringu jako ułamek rozmiaru docelowego symbolu
 RING_THICKNESS = 6               # grubość okręgu
 RING_ICON_SIZE_FACTOR = 0.46     # rozmiar ikon na ringu względem symbolu w centrum
+RING_ALPHA_MAIN  = 245           # główny łuk
+RING_ALPHA_SOFT  = 220           # delikatny łuk/warstwy
+RING_ALPHA_TICKS = 200           # „kreski” / znaczniki
+RING_ALPHA_HI    = 255           # akcent (scanner)
 
 # --- Ring layout (pozycje) ---
 DEFAULT_RING_LAYOUT = {
@@ -362,35 +366,39 @@ def ring_colors():
     return pal["base"], pal["hi"], pal["soft"]
 
 # --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
-MENU_TITLE_Y_FACTOR = 0.28        # pionowe położenie tytułu w MENU (proporcja wys.)
-MENU_MODE_GAP = 20                # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
-MENU_HINT_GAP = 48                # odstęp do pierwszej podpowiedzi
-MENU_HINT2_EXTRA_GAP = 12         # dodatkowy odstęp do drugiej podpowiedzi
-OVER_TITLE_OFFSET_Y = -60         # przesunięcie tytułu „GAME OVER”
-OVER_SCORE_GAP1 = -10             # przesunięcie pierwszej linii wyniku
-OVER_SCORE_GAP2 = 26              # przesunięcie drugiej linii wyniku
-OVER_INFO_GAP = 60                # odstęp do linii z instrukcją
-SETTINGS_TITLE_Y_FACTOR = 0.10    # pionowe położenie tytułu „Settings”
+MENU_TITLE_Y_FACTOR = 0.28           # pionowe położenie tytułu w MENU (proporcja wys.)
+MENU_MODE_GAP = 20                   # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
+MENU_HINT_GAP = 48                   # odstęp do pierwszej podpowiedzi
+MENU_HINT2_EXTRA_GAP = 12            # dodatkowy odstęp do drugiej podpowiedzi
+OVER_TITLE_OFFSET_Y = -60            # przesunięcie tytułu „GAME OVER”
+OVER_SCORE_GAP1 = -10                # przesunięcie pierwszej linii wyniku
+OVER_SCORE_GAP2 = 26                 # przesunięcie drugiej linii wyniku
+OVER_INFO_GAP = 60                   # odstęp do linii z instrukcją
+SETTINGS_TITLE_Y_FACTOR = 0.10       # pionowe położenie tytułu „Settings”
 SETTINGS_LIST_Y_START_FACTOR = 0.25  # start Y listy opcji
-SETTINGS_ITEM_SPACING = 3         # odstęp między wierszami listy
-SETTINGS_HELP_MARGIN_TOP = 18     # margines nad helpem na dole
-SETTINGS_HELP_GAP = 6             # odstęp między wierszami helpu
-SETTINGS_CENTER_GAP = 12          # odstęp między etykietą a wartością w wierszu
+SETTINGS_ITEM_SPACING = 3            # odstęp między wierszami listy
+SETTINGS_HELP_MARGIN_TOP = 18        # margines nad helpem na dole
+SETTINGS_HELP_GAP = 6                # odstęp między wierszami helpu
+SETTINGS_CENTER_GAP = 12             # odstęp między etykietą a wartością w wierszu
 
 # --- Top Header & Score Capsule --- (górny HUD)
-TOPBAR_HEIGHT_FACTOR = 0.095        # wysokość topbara (proporcja wys. okna)
-TOPBAR_PAD_X_FACTOR = 0.045       # poziomy padding lewej/prawej sekcji
-TOPBAR_UNDERLINE_THICKNESS = 4    # grubość linii pod topbarem
-TOPBAR_UNDERLINE_COLOR = (90, 200, 255)  # kolor linii
+TOPBAR_HEIGHT_FACTOR = 0.095                    # wysokość topbara (proporcja wys. okna)
+TOPBAR_PAD_X_FACTOR = 0.045                     # poziomy padding lewej/prawej sekcji
+TOPBAR_UNDERLINE_THICKNESS = 4                  # grubość linii pod topbarem
+TOPBAR_UNDERLINE_COLOR = (90, 200, 255)         # kolor linii
+TOPBAR_UNDERLINE_SHADOW_COLOR = (0, 0, 0, 140)  # kolor i alfa cienia
+TOPBAR_UNDERLINE_SHADOW_OFFSET = (2, 3)         # (dx, dy) przesunięcia w dół/prawo
+TOPBAR_UNDERLINE_SHADOW_EXTRA_THICK = 3         # cień jest trochę grubszy niż linia
+TOPBAR_UNDERLINE_SHADOW_RADIUS = 2              # lekkie zaokrąglenie krawędzi
 
-SCORE_CAPSULE_WIDTH_FACTOR = 0.42 # szerokość kapsuły wyniku (proporcja szer.)
-SCORE_CAPSULE_HEIGHT_FACTOR = 0.15# wysokość kapsuły (proporcja wys.)
-SCORE_CAPSULE_BORDER_COLOR = (120, 200, 255, 220)  # obrys kapsuły
-SCORE_CAPSULE_BG = (22, 26, 34, 170)               # tło kapsuły (z alpha)
-SCORE_CAPSULE_RADIUS = 26          # promień rogów kapsuły
-SCORE_CAPSULE_SHADOW = (0, 0, 0, 140)              # cień kapsuły
-SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)               # offset cienia
-SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                # minimalny „dodatkowy” wzrost wysokości
+SCORE_CAPSULE_WIDTH_FACTOR = 0.42                   # szerokość kapsuły wyniku (proporcja szer.)
+SCORE_CAPSULE_HEIGHT_FACTOR = 0.15                  # wysokość kapsuły (proporcja wys.)
+SCORE_CAPSULE_BORDER_COLOR = (120, 200, 255, 220)   # obrys kapsuły
+SCORE_CAPSULE_BG = (22, 26, 34, 170)                # tło kapsuły (z alpha)
+SCORE_CAPSULE_RADIUS = 26                           # promień rogów kapsuły
+SCORE_CAPSULE_SHADOW = (0, 0, 0, 140)               # cień kapsuły
+SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)                # offset cienia
+SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                 # minimalny „dodatkowy” wzrost wysokości
 
 # Typography (rozmiary bazowe; w kodzie są skalowane do okna)
 FONT_PATH = "assets/font/Orbitron-VariableFont_wght.ttf"
@@ -1963,9 +1971,17 @@ class Game:
         self.screen.blit(label_surf, (lx, y))
         self.screen.blit(value_surf, (vx, y + label_surf.get_height() + 2))
 
-    def _draw_label_value_vstack_center(self, *, label: str, value: str, anchor_rect: pygame.Rect) -> None:
-        label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
-        value_surf = self.hud_value_font.render(value, True, HUD_VALUE_COLOR)
+    def _draw_label_value_vstack_center(
+        self,
+        *,
+        label: str,
+        value: str,
+        anchor_rect: pygame.Rect,
+        label_color: Tuple[int,int,int] = HUD_LABEL_COLOR,
+        value_color: Tuple[int,int,int] = HUD_VALUE_COLOR,
+    ) -> None:
+        label_surf = self.hud_label_font.render(label, True, label_color)
+        value_surf = self.hud_value_font.render(value, True, value_color)
         gap = 2
         total_h = label_surf.get_height() + gap + value_surf.get_height()
 
@@ -2181,25 +2197,38 @@ class Game:
             self.screen.blit(timer_font.render(label, True, (0, 0, 0)), (tx + 2, ty + 2))
             self.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
 
+    def _draw_underline_segment_with_shadow(self, x1: int, x2: int, y: int, th: int, col) -> None:
+        if x2 < x1:
+            x1, x2 = x2, x1
+        # cień – prostokąt z alhą, delikatnie grubszy i przesunięty w dół
+        sx, sy = TOPBAR_UNDERLINE_SHADOW_OFFSET
+        shadow_h = th + TOPBAR_UNDERLINE_SHADOW_EXTRA_THICK
+        shadow_rect = pygame.Rect(x1 + sx, y - shadow_h // 2 + sy, x2 - x1, shadow_h)
+        pygame.draw.rect(self.screen, TOPBAR_UNDERLINE_SHADOW_COLOR, shadow_rect,
+                        border_radius=TOPBAR_UNDERLINE_SHADOW_RADIUS)
+        # właściwa linia
+        pygame.draw.line(self.screen, col, (x1, y), (x2, y), th)
+
     def _draw_hud(self) -> None:
         # --- pełne tło topbara: od lewej do prawej krawędzi ---
         top_bg = pygame.Surface((self.topbar_rect.width, self.topbar_rect.height), pygame.SRCALPHA)
         top_bg.fill(SCORE_CAPSULE_BG)  # (22, 26, 34, 170) — jak kapsuła SCORE
         self.screen.blit(top_bg, self.topbar_rect.topleft)
 
-        # --- underline (jak wcześniej: rozcięte pod kapsułę SCORE) ---
+        # --- underline --- #
         cap = self.score_capsule_rect
         y   = self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2
         th  = TOPBAR_UNDERLINE_THICKNESS
         col = TOPBAR_UNDERLINE_COLOR
+
         left_end    = max(self.topbar_rect.left, cap.left - 1)
         right_start = min(self.topbar_rect.right, cap.right + 1)
+
         if left_end > self.topbar_rect.left:
-            pygame.draw.line(self.screen, col,
-                            (self.topbar_rect.left, y), (left_end, y), th)
+            self._draw_underline_segment_with_shadow(self.topbar_rect.left, left_end, y, th, col)
+
         if right_start < self.topbar_rect.right:
-            pygame.draw.line(self.screen, col,
-                            (right_start, y), (self.topbar_rect.right, y), th)
+            self._draw_underline_segment_with_shadow(right_start, self.topbar_rect.right, y, th, col)
 
         # --- obszary do tekstów (bez rysowania tła; tylko rozmiar pod layout) ---
         pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
@@ -2258,8 +2287,13 @@ class Game:
         self.screen.blit(value_surf, (vx, vy))
 
         # HIGHSCORE po prawej (bez zmian)
+        hs_label_color = (255, 230, 140) if self.score > self.highscore else HUD_LABEL_COLOR
         self._draw_label_value_vstack_center(
-            label="HIGHSCORE", value=str(self.highscore), anchor_rect=right_block
+            label="HIGHSCORE",
+            value=str(self.highscore),
+            anchor_rect=right_block,
+            label_color=hs_label_color,          # tylko etykieta na złoto po pobiciu HS
+            value_color=HUD_VALUE_COLOR,         # liczba bez zmian
         )
 
         # --- kapsuła SCORE ---
@@ -2390,35 +2424,35 @@ class Game:
                 pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
                 a += dash + gap
 
-        # === L1 (fundament) ===
+        # L1 – fundament
         l1a = new_layer()
-        arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, 210), start=-math.pi*0.5)
+        arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
         l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
 
         l1b = new_layer()
-        arc(l1b, int(r*1.08), 0.60, 2, (*soft, 170), start=0.0)  # delikatniejszy, jaśniejszy
+        arc(l1b, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
         l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
 
         layers = [l1a, l1b]
 
-        # === L2 (od levelu 2) ===
+        # L2 – od levelu 2
         if self.level >= 2:
             l2a = new_layer()
-            ticks(l2a, r, 48, long_every=4, color=(*soft, 140))          # drobne ticki
+            ticks(l2a, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
             l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
 
             l2b = new_layer()
-            dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=160, color=soft)
+            dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
             l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
             layers += [l2a, l2b]
 
-        # === L3 (od levelu 3) – scanner ===
+        # L3 – scanner (akcent)
         if self.level >= 3:
             l3 = new_layer()
             sweep = math.radians(42)
-            start = t * 1.2  # CCW
+            start = t * 1.2
             rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
-            pygame.draw.arc(l3, (*hi, 230), rect, start, start + sweep, 6)             # hi = akcent
+            pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)  
             for w, a in ((12, 60), (20, 35)):
                 pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
             layers.append(l3)
@@ -2443,6 +2477,12 @@ class Game:
 
         # złożenie
         for L in layers: blit_center(L)
+
+        # --- Cienki outline, żeby ring był ostrzejszy ---
+        # (cx, cy, r) są zdefiniowane wyżej w tej funkcji.
+        if r > 2:  # zabezpieczenie, gdy ring jest bardzo mały
+            pygame.draw.circle(self.screen, (*base, 255), (cx, cy), r + 1, 1)
+            pygame.draw.circle(self.screen, (*base, 255), (cx, cy), r - 1, 1)
 
         # --- Ikony na ringu (ukrywane w memory) ---
         if self.level_cfg.memory_mode and not self.memory_show_icons:
