@@ -24,6 +24,7 @@ DEFAULT_CFG = {
     "lives": 3,
     "audio": {"music": "assets/music.ogg", "volume": 0.5},
     "effects": {"glitch_enabled": True},
+    "ui": {"ring_palette": "auto"},
     "images": {
         "background": "assets/images/bg.png",
         "symbol_circle": "assets/images/circle.png",
@@ -233,7 +234,8 @@ MAX_LIVES = CFG["lives"]                                     # liczba żyć w SP
 ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))  # bonus sekund po wylosowaniu reguły (TIMED)
 
 # Rozmiar i animacja symbolu celu
-SYMBOL_BASE_SIZE_FACTOR = 0.26    # bazowy rozmiar symbolu (proporcja szerokości okna)
+CENTER_Y_FACTOR = 0.58            # pozycja centralnego symbolu
+SYMBOL_BASE_SIZE_FACTOR = 0.28    # bazowy rozmiar symbolu (proporcja szerokości okna)
 SYMBOL_ANIM_TIME = 0.30           # czas dojścia animacji skali/pozycji do 100%
 SYMBOL_ANIM_START_SCALE = 0.20    # początkowa skala podczas spawn
 SYMBOL_ANIM_OFFSET_Y = 0.08       # startowe przesunięcie w dół (proporcja wysokości)
@@ -282,7 +284,7 @@ PULSE_DURATION = 0.30           # ~0.3 s
 PULSE_MAX_SCALE = 1.18          # ile maksymalnie powiększamy
 
 # --- Timer bar (bottom) --- (pasek czasu na dole ekranu)
-TIMER_BAR_WIDTH_FACTOR = 0.60     # szerokość paska względem szerokości okna
+TIMER_BAR_WIDTH_FACTOR = 0.66     # szerokość paska względem szerokości okna
 TIMER_BAR_HEIGHT = 18             # wysokość paska w px
 TIMER_BAR_MARGIN_TOP = 10         # wewnętrzny margines (niewykorzystywany – zachowany)
 TIMER_BAR_BG = (40, 40, 50)       # kolor tła paska
@@ -294,7 +296,7 @@ TIMER_BAR_CRIT_COLOR = (220, 80, 80)   # kolor krytyczny (bardzo mało czasu)
 TIMER_BAR_WARN_TIME = 0.50        # próg ostrzegawczy (ułamek 0–1)
 TIMER_BAR_CRIT_TIME = 0.25        # próg krytyczny (ułamek 0–1)
 TIMER_BAR_BORDER_RADIUS = UI_RADIUS     # zaokrąglenie rogów paska
-TIMER_BOTTOM_MARGIN_FACTOR = 0.03 # odległość paska od dołu ekranu (proporcja wys.)
+TIMER_BOTTOM_MARGIN_FACTOR = 0.02 # odległość paska od dołu ekranu (proporcja wys.)
 TIMER_BAR_TEXT_COLOR = INK        # kolor tekstu nad paskiem
 TIMER_FONT_SIZE = 48              # bazowy rozmiar czcionki timera (skaluje się w kodzie)
 TIMER_POSITION_INDICATOR_W = 4    # szerokość pionowego markera pozycji
@@ -318,10 +320,10 @@ RULE_ARROW_COLOR = (200, 220, 255)# kolor strzałki (fallback)
 RULE_PANEL_PAD = 16               # wewnętrzny padding panelu
 RULE_BANNER_VGAP = 8              # pionowe odstępy tytuł/ikony
 RULE_BANNER_TITLE = "REMAPPING:"   # tekst tytułu banera
-RULE_BANNER_PIN_SCALE = 0.50      # skala panelu po „zadokowaniu” u góry
+RULE_BANNER_PIN_SCALE = 0.65      # skala panelu po „zadokowaniu” u góry
 RULE_SYMBOL_SCALE_CENTER = 1.00   # skala symboli w centrum
 RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
-RULE_BANNER_MIN_W_FACTOR = 0.80   # minimalna szerokość panelu względem ekranu
+RULE_BANNER_MIN_W_FACTOR = 0.90   # minimalna szerokość panelu względem ekranu
 
 # --- Memory (ring hide conditions) ---
 MEMORY_HIDE_AFTER_MOVES = 4      # po ilu ruchach znikają ikony
@@ -330,10 +332,7 @@ MEMORY_HIDE_AFTER_SEC   = 5.0    # po ilu sekundach znikają ikony
 # --- Input Ring (wokół symbolu celu)
 RING_RADIUS_FACTOR = 1        # promień ringu jako ułamek rozmiaru docelowego symbolu
 RING_THICKNESS = 6               # grubość okręgu
-RING_COLOR = (120, 200, 255, 120)
-RING_ICON_SIZE_FACTOR = 0.44     # rozmiar ikon na ringu względem symbolu w centrum
-RING_GLOW_COLOR = (255, 240, 120, 70)  # poświata pod poprawną ikoną
-RING_GLOW_RADIUS = 24
+RING_ICON_SIZE_FACTOR = 0.46     # rozmiar ikon na ringu względem symbolu w centrum
 
 # --- Ring layout (pozycje) ---
 DEFAULT_RING_LAYOUT = {
@@ -342,7 +341,25 @@ DEFAULT_RING_LAYOUT = {
     "LEFT": "SQUARE",
     "BOTTOM": "CROSS",
 }
+
 RING_POSITIONS = ["TOP", "RIGHT", "LEFT", "BOTTOM"]
+
+RING_PALETTES = {
+    "clean-white":   {"base": (243,244,246), "hi": (255,255,255), "soft": (209,213,219)},
+    "electric-blue": {"base": (96,165,250),  "hi": (37,99,235),   "soft": (147,197,253)},
+    "neon-cyan":     {"base": (103,232,249), "hi": (34,211,238),  "soft": (165,243,252)},
+    "violet-neon":   {"base": (167,139,250), "hi": (139,92,246),  "soft": (196,181,253)},
+    "magenta":       {"base": (236,72,153),  "hi": (219,39,119),  "soft": (249,168,212)},
+    "gold":          {"base": (255,210,90),  "hi": (255,230,140), "soft": (245,195,70)},  # używane tylko po pobiciu HS
+}
+
+# tor dla AUTO (od startu do highscore)
+RING_GRADIENT_ORDER = ["clean-white", "electric-blue", "neon-cyan", "violet-neon", "magenta"]
+
+RING_PALETTE_NAME = CFG.get("ui", {}).get("ring_palette", "neon-cyan")
+def ring_colors():
+    pal = RING_PALETTES.get(RING_PALETTE_NAME, RING_PALETTES["neon-cyan"])
+    return pal["base"], pal["hi"], pal["soft"]
 
 # --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
 MENU_TITLE_Y_FACTOR = 0.28        # pionowe położenie tytułu w MENU (proporcja wys.)
@@ -361,7 +378,7 @@ SETTINGS_HELP_GAP = 6             # odstęp między wierszami helpu
 SETTINGS_CENTER_GAP = 12          # odstęp między etykietą a wartością w wierszu
 
 # --- Top Header & Score Capsule --- (górny HUD)
-TOPBAR_HEIGHT_FACTOR = 0.1        # wysokość topbara (proporcja wys. okna)
+TOPBAR_HEIGHT_FACTOR = 0.095        # wysokość topbara (proporcja wys. okna)
 TOPBAR_PAD_X_FACTOR = 0.045       # poziomy padding lewej/prawej sekcji
 TOPBAR_UNDERLINE_THICKNESS = 4    # grubość linii pod topbarem
 TOPBAR_UNDERLINE_COLOR = (90, 200, 255)  # kolor linii
@@ -512,7 +529,7 @@ LEVELS: Dict[int, LevelCfg] = {
     4: LevelCfg(4,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         rotations_per_level=3,
-        instruction="Level 4 — Mix\nReguły + rotacje.",
+        instruction="Level 4 — Mix\nReguly + rotacje.",
         score_color=(255,170,80),   # POMARAŃCZ
         hits_required=15
     ),
@@ -904,9 +921,10 @@ class Game:
         self.rules = RuleManager()
         self.banner = BannerManager(RULE_BANNER_IN_SEC, RULE_BANNER_HOLD_SEC, RULE_BANNER_TO_TOP_SEC)
 
-        # ring: pos -> symbol (dynamiczny)
+        # ring
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
-
+        self._ring_anim_start = self.now()
+        
         # memory (L5)
         self.memory_show_icons = True
         self.memory_intro_until = 0.0   # (stare – nie użyjemy już do ukrywania)
@@ -950,6 +968,7 @@ class Game:
             # expose banner fonts in settings so they can be tweaked live
             "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
             "rule_font_pinned": int(CFG["rules"].get("banner_font_pinned", 40)),
+            "ring_palette": str(CFG.get("ui", {}).get("ring_palette", "auto")),
         }
 
         # effects
@@ -1197,6 +1216,7 @@ class Game:
             ("Volume", f"{self.settings['volume']:.2f}", "volume"),
             ("Fullscreen", "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
             ("Glitch", "ON" if self.settings.get('glitch_enabled', True) else "OFF", "glitch_enabled"),
+            ("Ring palette", f"{self.settings['ring_palette']}", "ring_palette"),
             ("High score", f"{self.highscore}", None),
             ("Rule bonus", f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
             ("Banner font (center)", f"{self.settings['rule_font_center']}", "rule_font_center"),
@@ -1209,7 +1229,6 @@ class Game:
             if not L: continue
             col = "#{:02X}{:02X}{:02X}".format(*L.score_color)
             items.append((f"Level {lid} — Required hits", f"{L.hits_required}", f"level{lid}_hits"))
-            items.append((f"Level {lid} — Color", col, f"level{lid}_color"))
         return items
 
     def settings_move(self, delta: int) -> None:
@@ -1271,6 +1290,15 @@ class Game:
         if key is None:
             return
         
+        if key == "ring_palette":
+            opts = ["auto", "clean-white", "electric-blue", "neon-cyan", "violet-neon", "magenta"]
+            cur = self.settings.get("ring_palette", "auto")
+            try: i = opts.index(cur)
+            except ValueError: i = 0
+            i = (i + delta) % len(opts)
+            self.settings["ring_palette"] = opts[i]
+            return
+
         # --- per-level edits ---
         if key and key.startswith("level") and ("_hits" in key or "_color" in key):
             try:
@@ -1347,6 +1375,7 @@ class Game:
             "timed_rule_bonus": float(CFG["timed"].get("rule_bonus", 5.0)),
             "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
             "rule_font_pinned": int(CFG["rules"].get("banner_font_pinned", 40)),
+            "ring_palette": str(CFG.get("ui", {}).get("ring_palette", "auto")),
         })
         self.settings_idx = 0
         self.settings_move(0)
@@ -1373,6 +1402,7 @@ class Game:
         CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
         CFG["rules"]["banner_font_center"] = int(s["rule_font_center"]) 
         CFG["rules"]["banner_font_pinned"] = int(s["rule_font_pinned"]) 
+        CFG.setdefault("ui", {})["ring_palette"] = str(self.settings["ring_palette"])
 
         levels_dump = {}
         for lid, L in LEVELS.items():
@@ -1393,6 +1423,7 @@ class Game:
                     "windowed_size": CFG["display"].get("windowed_size", list(WINDOWED_DEFAULT_SIZE)),
                 },
                 "timed": {"rule_bonus": CFG["timed"]["rule_bonus"], "duration": CFG["timed"].get("duration", TIMED_DURATION)},
+                "ui": {"ring_palette": CFG["ui"]["ring_palette"]},
                 "rules": {
                     "every_hits": CFG["rules"].get("every_hits", RULE_EVERY_HITS),
                     "banner_sec": CFG["rules"].get("banner_sec", RULE_BANNER_SEC),
@@ -1495,11 +1526,6 @@ class Game:
 
     def level_value_color(self) -> Tuple[int, int, int]:
         return getattr(self.level_cfg, "score_color", LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR))
-
-    def level_ring_color(self) -> Tuple[int,int,int,int]:
-        r, g, b = self.level_value_color()
-        a = RING_COLOR[3] if isinstance(RING_COLOR, tuple) and len(RING_COLOR) == 4 else 120
-        return (r, g, b, a)
 
     def new_target(self) -> None:
         prev = self.target
@@ -1616,7 +1642,6 @@ class Game:
             if event.type == pygame.MOUSEWHEEL and self.scene is Scene.SETTINGS:
                 self.settings_scroll = max(0.0, self.settings_scroll - event.y * 40)
                 return
-
 
     def handle_input_symbol(self, name: str) -> None:
         if self.scene is not Scene.GAME or not self.target:
@@ -2266,31 +2291,156 @@ class Game:
         else:
             self.screen.fill(BG)
 
-    def _draw_input_ring(self, center: tuple[int, int], base_size: int) -> None:
+    def ring_colors(self) -> tuple[tuple[int,int,int], tuple[int,int,int], tuple[int,int,int]]:
+        def _lerp(a,b,t):
+            t = max(0.0, min(1.0, float(t)))
+            return (int(a[0] + (b[0]-a[0])*t),
+                    int(a[1] + (b[1]-a[1])*t),
+                    int(a[2] + (b[2]-a[2])*t))
+        def _pal(name): return RING_PALETTES[name]
+        def _lerp_pal(p1, p2, t):
+            return (_lerp(p1["base"], p2["base"], t),
+                    _lerp(p1["hi"],   p2["hi"],   t),
+                    _lerp(p1["soft"], p2["soft"], t))
+
+        sel = str(self.settings.get("ring_palette", "auto"))
+
+        # po pobiciu rekordu — złoto niezależnie od wyboru (feedback)
+        if self.score > max(0, self.highscore):
+            g = _pal("gold")
+            return g["base"], g["hi"], g["soft"]
+
+        if sel != "auto":
+            p = _pal(sel)
+            return p["base"], p["hi"], p["soft"]
+
+        # AUTO: progres od 0..highscore
+        hs = max(1, int(self.highscore))      # unikamy dzielenia przez zero
+        prog = max(0.0, min(1.0, self.score / hs))
+
+        names = RING_GRADIENT_ORDER
+        if len(names) == 1:
+            p = _pal(names[0]); return p["base"], p["hi"], p["soft"]
+
+        segs = len(names) - 1
+        x = prog * segs
+        i = min(segs - 1, int(x))
+        t = x - i
+        p1 = _pal(names[i]); p2 = _pal(names[i+1])
+        return _lerp_pal(p1, p2, t)
+
+    def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int) -> None:
         cx, cy = center
         r = int(base_size * RING_RADIUS_FACTOR)
 
-        # ring
-        surf = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-        pygame.draw.circle(surf, self.level_ring_color(), (cx, cy), r, RING_THICKNESS)
-        self.screen.blit(surf, (0, 0))
+        # kolory z wybranej palety
+        base, hi, soft = self.ring_colors()
 
-        pos_xy = {
-            "TOP":    (cx, cy - r),
-            "RIGHT":  (cx + r, cy),
-            "LEFT":   (cx - r, cy),
-            "BOTTOM": (cx, cy + r),
-        }
-        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+        # czas i prędkości obrotów (deg/s) – delikatnie rosną z levelem
+        t = self.now() - self._ring_anim_start
+        base_cw  = 40 + 6 * (self.level - 1)     # clockwise
+        base_ccw = 60 + 8 * (self.level - 1)     # counter-clockwise
+        rot_cw_deg  = -t * base_cw               # rotozoom: minus = CW
+        rot_ccw_deg =  t * base_ccw
 
-        # jeśli memory i ikony mają być ukryte – nic nie rysujemy na ringu
+        # lokalne płótna do obracania całych warstw
+        margin = 36
+        side = (r + margin) * 2
+        C = side // 2
+        def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
+        def blit_center(surf):
+            rect = surf.get_rect(center=(cx, cy))
+            self.screen.blit(surf, rect)
+
+        # helpers
+        def arc(surface, rad, frac, thick, color, *, start=0.0):
+            """Łuk o długości frac*2π (0..1)."""
+            frac = max(0.0, min(1.0, float(frac)))
+            rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+            a0 = float(start); a1 = a0 + 2*math.pi*frac
+            pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
+
+        def ticks(surface, rad, count, long_every=4, color=(255,255,255,120)):
+            for i in range(count):
+                ang = (i / count) * 2*math.pi
+                s, c = math.sin(ang), math.cos(ang)
+                r1 = rad + (8 if (i % long_every == 0) else 3)
+                r2 = rad - (12 if (i % long_every == 0) else 5)
+                x1, y1 = int(C + c*r1), int(C + s*r1)
+                x2, y2 = int(C + c*r2), int(C + s*r2)
+                pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
+
+        def dashed_ring(surface, rad, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
+            dash = math.radians(dash_deg); gap = math.radians(gap_deg)
+            rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+            a = 0.0
+            col = color or base
+            while a < 2*math.pi:
+                pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
+                a += dash + gap
+
+        # === L1 (fundament) ===
+        l1a = new_layer()
+        arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, 210), start=-math.pi*0.5)
+        l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
+
+        l1b = new_layer()
+        arc(l1b, int(r*1.08), 0.60, 2, (*soft, 170), start=0.0)  # delikatniejszy, jaśniejszy
+        l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
+
+        layers = [l1a, l1b]
+
+        # === L2 (od levelu 2) ===
+        if self.level >= 2:
+            l2a = new_layer()
+            ticks(l2a, r, 48, long_every=4, color=(*soft, 140))          # drobne ticki
+            l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
+
+            l2b = new_layer()
+            dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=160, color=soft)
+            l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
+            layers += [l2a, l2b]
+
+        # === L3 (od levelu 3) – scanner ===
+        if self.level >= 3:
+            l3 = new_layer()
+            sweep = math.radians(42)
+            start = t * 1.2  # CCW
+            rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
+            pygame.draw.arc(l3, (*hi, 230), rect, start, start + sweep, 6)             # hi = akcent
+            for w, a in ((12, 60), (20, 35)):
+                pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
+            layers.append(l3)
+
+        # === L4 (od levelu 4) – orbitery ===
+        if self.level >= 4:
+            l4 = new_layer()
+            orbit_r = int(r * 1.15)
+            for k in range(3):
+                ang = t * 1.4 + k * (2*math.pi/3)
+                x = int(C + math.cos(ang) * orbit_r)
+                y = int(C + math.sin(ang) * orbit_r)
+                pygame.draw.circle(l4, (*base, 170), (x, y), 3)
+            layers.append(l4)
+
+        # === L5 (od levelu 5) – zewnętrzny dashed ===
+        if self.level >= 5:
+            l5 = new_layer()
+            dashed_ring(l5, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
+            l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
+            layers.append(l5)
+
+        # złożenie
+        for L in layers: blit_center(L)
+
+        # --- Ikony na ringu (ukrywane w memory) ---
         if self.level_cfg.memory_mode and not self.memory_show_icons:
             return
-
+        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+        pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
         for pos, (ix, iy) in pos_xy.items():
             name = self.ring_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
-            rect = pygame.Rect(0, 0, icon_size, icon_size)
-            rect.center = (ix, iy)
+            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
             self.draw_symbol(self.screen, name, rect)
 
     def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect) -> None:
@@ -2303,8 +2453,8 @@ class Game:
         scale *= self.fx.pulse_scale('symbol')             # << pulsing z FX
         size = int(base_size * scale)
 
-        start_y = self.h * (0.5 + SYMBOL_ANIM_OFFSET_Y)
-        end_y = self.h * 0.5
+        end_y = self.h * CENTER_Y_FACTOR
+        start_y = end_y + self.h * SYMBOL_ANIM_OFFSET_Y
         cy = start_y + (end_y - start_y) * eased
 
         dx, dy = self.fx.shake_offset(self.w)              # << shake z FX
@@ -2345,10 +2495,10 @@ class Game:
         # bazowy prostokąt pod symbol w centrum (zawsze liczony)
         base_size = int(self.w * SYMBOL_BASE_SIZE_FACTOR)
         base_rect = pygame.Rect(0, 0, base_size, base_size)
-        base_rect.center = (int(self.w * 0.5), int(self.h * 0.5))
+        base_rect.center = (int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR))
 
         # ring dookoła symbolu
-        self._draw_input_ring(base_rect.center, base_rect.width)
+        self._draw_input_ring_progressive(base_rect.center, base_rect.width)
 
         # jeśli trwa/just-ended exit-slide, NIE rysujemy centralnego symbolu
         if self.exit_dir_pos:
@@ -2529,7 +2679,6 @@ class Game:
 
 
 def main():
-    """Program entry. Sets up window, game object, GPIO (optional) and the loop."""
     os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"
     pygame.init()
     pygame.key.set_repeat()

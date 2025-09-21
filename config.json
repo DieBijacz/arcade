@@ -9,14 +9,14 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      770,
-      1369
+      720,
+      1280
     ]
   },
   "speedup": {
-    "target_time_initial": 9.99999999999998,
+    "target_time_initial": 3.0,
     "target_time_min": 0.45,
-    "target_time_step": -0.05
+    "target_time_step": -0.03
   },
   "timed": {
     "duration": 60.0,
@@ -36,6 +36,9 @@
   "effects": {
     "glitch_enabled": true
   },
+  "ui": {
+    "ring_palette": "auto"
+  },
   "images": {
     "background": "assets/images/bg.png",
     "symbol_circle": "assets/images/circle.png",
@@ -44,7 +47,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 158,
+  "highscore": 0,
   "levels": {
     "1": {
       "hits": 15,
