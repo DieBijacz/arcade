@@ -14,9 +14,9 @@
     ]
   },
   "speedup": {
-    "target_time_initial": 3.0,
+    "target_time_initial": 9.99999999999998,
     "target_time_min": 0.45,
-    "target_time_step": -0.03
+    "target_time_step": -0.09999999999999999
   },
   "timed": {
     "duration": 60.0,
@@ -47,7 +47,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 0,
+  "highscore": 35,
   "levels": {
     "1": {
       "hits": 15,

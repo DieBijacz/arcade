@@ -2182,26 +2182,37 @@ class Game:
             self.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
 
     def _draw_hud(self) -> None:
-        # Header underline (cyan)
-        # --- underline split to avoid drawing under the SCORE capsule ---
+        # --- pełne tło topbara: od lewej do prawej krawędzi ---
+        top_bg = pygame.Surface((self.topbar_rect.width, self.topbar_rect.height), pygame.SRCALPHA)
+        top_bg.fill(SCORE_CAPSULE_BG)  # (22, 26, 34, 170) — jak kapsuła SCORE
+        self.screen.blit(top_bg, self.topbar_rect.topleft)
+
+        # --- underline (jak wcześniej: rozcięte pod kapsułę SCORE) ---
         cap = self.score_capsule_rect
         y   = self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2
         th  = TOPBAR_UNDERLINE_THICKNESS
         col = TOPBAR_UNDERLINE_COLOR
-
         left_end    = max(self.topbar_rect.left, cap.left - 1)
         right_start = min(self.topbar_rect.right, cap.right + 1)
-
-        # lewy odcinek
         if left_end > self.topbar_rect.left:
             pygame.draw.line(self.screen, col,
                             (self.topbar_rect.left, y), (left_end, y), th)
-        # prawy odcinek
         if right_start < self.topbar_rect.right:
             pygame.draw.line(self.screen, col,
                             (right_start, y), (self.topbar_rect.right, y), th)
 
-        # --- STREAK (lewo) / HIGHSCORE (prawo) liczone względem kapsuły SCORE ---
+        # --- obszary do tekstów (bez rysowania tła; tylko rozmiar pod layout) ---
+        pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
+        left_block = pygame.Rect(
+            pad_x, self.topbar_rect.top,
+            max(1, cap.left - pad_x * 2), self.topbar_rect.height
+        )
+        right_block = pygame.Rect(
+            cap.right + pad_x, self.topbar_rect.top,
+            max(1, self.w - pad_x - (cap.right + pad_x)), self.topbar_rect.height
+        )
+
+        # --- STREAK / HIGHSCORE
         pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
         cap = self.score_capsule_rect
 
