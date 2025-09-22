@@ -900,9 +900,12 @@ class TutorialPlayer:
                  mapping_pair: Optional[tuple[str,str]] = None,
                  show_mapping_banner: bool = False,
                  sequential: bool = True,
-                 seq_gap: float = 0.12):   
+                 seq_gap: float = 0.12,
+                 static_banner: bool = True):  
+         
         self.g = game
         self.caption = caption
+        self.show_caption = True   
 
         # niezależny czas tutorialu
         self.t0 = game.now()
@@ -914,10 +917,12 @@ class TutorialPlayer:
         self.items = sorted(items, key=lambda it: it.at)
         self._spawned_idx: int = -1      
         self._active: list[dict] = []
+        self._finished = False
 
         # mapping & baner
         self.mapping_pair = mapping_pair  # np. ('CIRCLE','TRIANGLE')
         self.show_mapping_banner = bool(show_mapping_banner)
+        self.static_banner = bool(static_banner)
         self.banner_start_t = self.g.now() if show_mapping_banner and mapping_pair else None
 
         # sterowanie sekwencją
@@ -993,19 +998,55 @@ class TutorialPlayer:
                         self.ring_layout[p] = s
                 self._active.append({'item': it, 'started': now, 'slide_start': None})
 
+        # Uznajemy, że skończone, gdy wystartowały wszystkie scenki i żadna nie jest już aktywna
+        if (self._spawned_idx + 1) >= len(self.items) and not self._active:
+            self._finished = True
+
+    def is_finished(self) -> bool:
+        return bool(self._finished)
+
     # --- render ---
     def _draw_mapping_banner(self):
-        """Prosta animacja banera jak w grze (in→hold→dock)."""
         if not (self.mapping_pair and self.show_mapping_banner and self.banner_start_t is not None):
             return
+
         g = self.g
+
+        # Tryb statyczny – używany na ekranie instrukcji (preferowany dla L2/L4)
+        if self.static_banner:
+            # pozycjonowanie nad ringiem
+            base_size = int(g.w * SYMBOL_BASE_SIZE_FACTOR)
+            cx, cy = int(g.w * 0.5), int(g.h * CENTER_Y_FACTOR)
+            r = int(base_size * RING_RADIUS_FACTOR)
+
+            panel_scale = RULE_BANNER_PIN_SCALE * g.fx.pulse_scale('banner')
+            symbol_scale = RULE_SYMBOL_SCALE_PINNED
+            panel, shadow = g._render_rule_panel_surface(
+                self.mapping_pair, panel_scale, symbol_scale, label_font=g.rule_font_pinned
+            )
+            pw, ph = panel.get_size()
+
+            px = (g.w - pw) // 2
+            # umieść tuż nad ringiem, z małym marginesem
+            margin = g.px(12)                  # odstęp od ringa
+            lift   = int(g.h * 0.06)           # podniesienie ~6% wysokości ekranu (wyżej = większa wartość)
+            safe_top = int(g.h * 0.18)         # nie wchodź w nagłówek "LEVEL X"
+
+            py = cy - r - ph - margin - lift   # podnieś baner
+            py = max(safe_top, py)             # clamp, żeby nie przyklejać do tytułu
+
+            g.screen.blit(shadow, (px + 3, py + 5))
+            g.screen.blit(panel, (px, py))
+            return
+
+        # --- Tryb animowany (stary) ---
         now = g.now()
         t = now - self.banner_start_t
         IN, HOLD, OUT = RULE_BANNER_IN_SEC, RULE_BANNER_HOLD_SEC, RULE_BANNER_TO_TOP_SEC
         total = IN + HOLD + OUT
         if t > total:
-            # po animacji – rysuj „pinned”
-            panel, shadow = g._render_rule_panel_surface(self.mapping_pair, RULE_BANNER_PIN_SCALE, RULE_SYMBOL_SCALE_PINNED, label_font=g.rule_font_pinned)
+            panel, shadow = g._render_rule_panel_surface(self.mapping_pair, RULE_BANNER_PIN_SCALE,
+                                                        RULE_SYMBOL_SCALE_PINNED, label_font=g.rule_font_pinned)
             pw, ph = panel.get_size()
             px = (g.w - pw)//2
             py = int(getattr(g, "_rule_pinned_y", g.topbar_rect.bottom + g.px(12)))
@@ -1013,7 +1054,7 @@ class TutorialPlayer:
             g.screen.blit(panel, (px, py))
             return
 
-        if t <= IN:             # wejście z góry
+        if t <= IN:
             p = g._ease_out_cubic(t / max(1e-6, IN))
             panel_scale = RULE_BANNER_PIN_SCALE + (1.0 - RULE_BANNER_PIN_SCALE) * p
             symbol_scale = RULE_SYMBOL_SCALE_PINNED + (RULE_SYMBOL_SCALE_CENTER - RULE_SYMBOL_SCALE_PINNED) * p
@@ -1021,11 +1062,11 @@ class TutorialPlayer:
             mid_y = int(g.h * 0.30)
             y = int(start_y + (mid_y - start_y) * p)
             font = g.rule_font_center
-        elif t <= IN + HOLD:    # hold w centrum
+        elif t <= IN + HOLD:
             panel_scale = 1.0; symbol_scale = RULE_SYMBOL_SCALE_CENTER
             mid_y = int(g.h * 0.30); y = mid_y
             font = g.rule_font_center
-        else:                   # wyjście w dół do „pinned”
+        else:
             p = g._ease_out_cubic((t - IN - HOLD) / max(1e-6, OUT))
             panel_scale = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * p
             symbol_scale = RULE_SYMBOL_SCALE_CENTER + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * p
@@ -1081,24 +1122,26 @@ class TutorialPlayer:
                 srf = pygame.Surface((size, size), pygame.SRCALPHA)
                 g.draw_symbol(srf, it.symbol, srf.get_rect())
 
-                # fade podczas slajdu, a po slajdzie „ogon” znika do zera w czasie tail_sec
+                # fade jak w gameplay exit-slide: gaśnie w trakcie slajdu
                 if prog < 1.0:
-                    alpha = 255
+                    alpha = max(0, int(255 * (1.0 - eased)))
                 else:
-                    tail = max(1e-6, it.tail_sec)
-                    post = (g.now() - (slide_start + it.slide_duration)) / tail
-                    alpha = max(0, int(255 * (1.0 - max(0.0, min(1.0, post)))))
+                    alpha = 0
                 srf.set_alpha(alpha)
 
-                g.screen.blit(srf, (ex - size//2, ey - size//2))
+                if alpha > 0:
+                    g.screen.blit(srf, (ex - size//2, ey - size//2))
 
-        # podpis (jeśli chcesz — tak jak miałeś)
-        if self.caption:
-            tw, th = g.mid.size(self.caption)
-            g.draw_text(g.mid, self.caption, (g.w/2 - tw/2, cy + base_size//2 + g.px(18)), color=ACCENT)
+            if self.caption and self.show_caption:
+                r = int(base_size * RING_RADIUS_FACTOR)
+                margin = g.px(14)
+                y = cy - r - g.mid.get_height() - margin
+                if getattr(self, "static_banner", False):
+                    y -= g.px(12)
+                tw, th = g.mid.size(self.caption)
+                g.draw_text(g.mid, self.caption, (g.w/2 - tw/2, y), color=ACCENT)
 
 def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer']:
-    # wygodne aliasy
     SYM = lambda: random.choice(SYMS)
 
     # === LEVEL 1 — Classic (3 scenki, wolniejsza animacja) ===
@@ -1109,37 +1152,33 @@ def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer'
             DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
             DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
         ]
-        return TutorialPlayer(g, items, caption="Trafiaj ten sam symbol na ringu.",
-                            mapping_pair=None, show_mapping_banner=False,
-                            sequential=True, seq_gap=0.12)
+        cap = f"Match symbol"
+        return TutorialPlayer(g, items, caption=cap, mapping_pair=None, show_mapping_banner=False, sequential=True, seq_gap=0.12)
 
     # === LEVEL 2 — Mapping A⇒B (baner + 3 scenki) ===
     if level == 2:
         # losujemy mapping i pokazujemy baner (in→hold→dock)
         a = SYM()
         b = random.choice([s for s in SYMS if s != a])
-
-        # 1) symbol A — rusza do B (use_mapping=True)
-        # 2) symbol „neutralny” — rusza „do siebie”
-        # 3) znów A — utrwalenie
         neutral = random.choice([s for s in SYMS if s not in (a, b)])
 
         items = [
             DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
-            DemoItem(at=1.1,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False),
-            DemoItem(at=2.2,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+            DemoItem(at=0.0,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False),
+            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
         ]
-        cap = f"Mapping: gdy widzisz {a}, naciśnij {b}."
-        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True)
+        cap = f"Follow remap"
+        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True, static_banner=True)
 
     # === LEVEL 3 — Rotacje (3 scenki + dwie rotacje wizualne) ===
     if level == 3:
         items = [
             DemoItem(at=0.0,  symbol="CROSS",   slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=1.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=2.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
+            DemoItem(at=0.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
         ]
-        return TutorialPlayer(g, items, caption="Ring rotuje – obserwuj położenia.")
+        cap = f"Ring rotates"
+        return TutorialPlayer(g, items, caption=cap)
 
     # === LEVEL 4 — Mix (rotacje + mapping; baner + 3 scenki) ===
     if level == 4:
@@ -1148,20 +1187,21 @@ def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer'
         neutral = random.choice([s for s in SYMS if s not in (a, b)])
         items = [
             DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True, rotate_ring=True),
-            DemoItem(at=1.1,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False, rotate_ring=True),
-            DemoItem(at=2.2,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+            DemoItem(at=0.0,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False, rotate_ring=True),
+            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
         ]
-        cap = f"Uwaga: rotacje i mapping ({a} ⇒ {b})."
-        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True)
+        cap = f"Remap + rotate"
+        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True, static_banner=True)
 
     # === LEVEL 5 — Memory (3 scenki, bez HUD; tylko idea) ===
     if level == 5:
         items = [
             DemoItem(at=0.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=1.0,  symbol="CIRCLE",  slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=2.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0,  symbol="CIRCLE",  slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
         ]
-        return TutorialPlayer(g, items, caption="Zapamiętaj układ — w trakcie znikną ikony.")
+        cap = f"Memorize layout"
+        return TutorialPlayer(g, items, caption=cap)
 
     return None
 
@@ -1396,6 +1436,7 @@ class Game:
         p = S(int(CFG["rules"].get("banner_font_pinned", 40)))
         self.rule_font_center = pygame.font.Font(FONT_PATH, max(8, c))
         self.rule_font_pinned = pygame.font.Font(FONT_PATH, max(8, p))
+        self.hint_font = pygame.font.Font(FONT_PATH, max(8, int(self.font.get_height() * 0.85)))
 
     def _build_rule_fonts(self) -> None:
         c = int(CFG["rules"].get("banner_font_center", 64))
@@ -1846,8 +1887,8 @@ class Game:
         self._plan_rotations_for_level()
         self.memory_show_icons = True
         self.memory_intro_until = 0.0
-        self.instruction_text = self.level_cfg.instruction or f"LEVEL {lvl}"
-        self.instruction_until = self.now() + float(self.level_cfg.instruction_sec or 0.0)
+        self.instruction_text = f"LEVEL {lvl}"
+        self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
         self.tutorial = build_tutorial_for_level(self, lvl)
 
@@ -1982,9 +2023,9 @@ class Game:
                     self.settings_reset_highscore(); return
             
             elif self.scene is Scene.INSTRUCTION:
-                # ENTER lub dowolny klawisz akcji = skip
+                # ENTER lub SPACE = skip → natychmiast start gry
                 if event.key in (pygame.K_RETURN, pygame.K_SPACE) or event.key in self.key_to_pos:
-                    self.instruction_until = 0.0  # natychmiast przejdź do gry
+                    self._enter_gameplay_after_instruction()
                     return
 
             # mark key as down for debouncing
@@ -2097,13 +2138,21 @@ class Game:
         # debounce
         if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
             self.lock_until_all_released = False
-
+        
         # INSTRUKCJA: czekamy do końca timera albo na skip
         if self.scene is Scene.INSTRUCTION:
             _ = iq.pop_all()
+
+            # 1) odpal/aktualizuj tutorial
             if self.tutorial:
                 self.tutorial.update()
-            if now >= self.instruction_until:
+                # 2) gdy tutorial skończył wszystkie scenki — przejście do gry
+                if self.tutorial.is_finished():
+                    self._enter_gameplay_after_instruction()
+                    return
+
+            # 3) fallback: jeśli kiedyś jednak ustawisz licznik czasu – też zadziała
+            if self.instruction_until != float('inf') and self.now() >= self.instruction_until:
                 self._enter_gameplay_after_instruction()
             return
 
@@ -3074,24 +3123,34 @@ class Game:
                 self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, base_y + h1 + help_gap))
             
             elif self.scene is Scene.INSTRUCTION:
-                # tło + nagłówek
-                self._blit_bg()
-                lines = (self.instruction_text or f"LEVEL {self.level}").splitlines()
-                y = self.h * 0.18
-                for i, L in enumerate(lines):
-                    f = self.big if i == 0 else self.mid
-                    tw, th = f.size(L)
-                    self.draw_text(f, L, (self.w/2 - tw/2, y))
-                    y += th + self.px(10)
-
-                # POKAZ: ring + centralny symbol + animacja ruchu → bez HUD/score
+                # najpierw tutorial (ring + animacje)
                 if self.tutorial:
                     self.tutorial.draw()
 
-                # hint „skip”
+                # --- TYTUŁ ---
+                title = self.instruction_text or f"LEVEL {self.level}"
+                tw, th = self.big.size(title)
+                title_y = int(self.h * 0.14)
+                self.draw_text(self.big, title, (self.w/2 - tw/2, title_y))
+
+                # --- CAPTION POD TYTUŁEM (np. "Follow remap") ---
+                if self.tutorial and getattr(self.tutorial, "caption", ""):
+                    cap = self.tutorial.caption
+                    cw, ch = self.mid.size(cap)
+                    cap_margin = self.px(8)
+                    self.draw_text(self.mid, cap, (self.w/2 - cw/2, title_y + th + cap_margin), color=ACCENT)
+                    # nie rysuj już captionu w TutorialPlayerze (nad ringiem)
+                    self.tutorial.show_caption = False
+
+                # --- HINT w prawym dolnym rogu ---
                 hint = "ENTER/SPACE = start"
-                hw, hh = self.font.size(hint)
-                self.draw_text(self.font, hint, (self.w/2 - hw/2, int(self.h * 0.90)), color=ACCENT)
+                fnt  = getattr(self, "hint_font", self.font)
+                hw, hh = fnt.size(hint)
+                pad = self.px(14)
+                x = self.w - hw - pad
+                y = self.h - hh - pad
+                self.screen.blit(fnt.render(hint, True, (0, 0, 0)), (x + 2, y + 2))
+                self.screen.blit(fnt.render(hint, True, (220, 200, 120)), (x, y))
 
         finally:
             self.screen = old_screen
