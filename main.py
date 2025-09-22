@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Callable
 
 import pygame
 
@@ -549,6 +549,7 @@ LEVELS: Dict[int, LevelCfg] = {
     2: LevelCfg(2,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         instruction="Level 2 — New Rule\nZwracaj uwagę na baner.",
+        instruction_sec=5.0,
         score_color=(60,200,120),
         hits_required=15
     ),
@@ -556,14 +557,15 @@ LEVELS: Dict[int, LevelCfg] = {
         rules=[],
         rotations_per_level=3,
         instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie.",
-        score_color=(90,200,255),   # CYAN (domyślny, jeśli brakował)
+        score_color=(90,200,255), 
         hits_required=15
     ),
     4: LevelCfg(4,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         rotations_per_level=3,
         instruction="Level 4 — Mix\nReguly + rotacje.",
-        score_color=(255,170,80),   # POMARAŃCZ
+        instruction_sec=5.0,  
+        score_color=(255,170,80),
         hits_required=15
     ),
     5: LevelCfg(5,
@@ -571,7 +573,7 @@ LEVELS: Dict[int, LevelCfg] = {
         rotations_per_level=1,
         memory_mode=True, memory_intro_sec=3.0,
         instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną.",
-        score_color=(180,120,255),  # FIOLET
+        score_color=(180,120,255),  
         hits_required=15
     ),
 }
@@ -597,8 +599,6 @@ apply_levels_from_cfg(CFG)
 
 
 # ========= RULE MANAGER =========
-
-
 class RuleManager:
     """Zarządza aktywnymi zasadami oraz aktualnym mappingiem A->B."""
     def __init__(self):
@@ -642,8 +642,6 @@ class RuleManager:
 
 
 # ========= BANNER MANAGER =========
-
-
 class BannerManager:
     """Trzyma czas animacji banera: in -> hold -> out(dock)."""
     def __init__(self, in_sec: float, hold_sec: float, out_sec: float):
@@ -885,8 +883,289 @@ class EffectsManager:
         self.exit_start = 0.0
 
 
-# ========= GAME =========
+# ========= TUTORIAL =========
+@dataclass
+class DemoItem:
+    at: float                     # kiedy zacząć (od startu tutorialu)
+    symbol: str                   # jaki symbol pojawia się w centrum
+    slide_delay: float = 1.0      # po ilu sekundach od pojawienia się rusza w stronę ringu
+    slide_duration: float = 0.55  # jak długo „wyjeżdża” (wolniej niż gameplay EXIT_SLIDE_SEC)
+    use_mapping: bool = False     # jeśli True i jest mapping A⇒B, to jadę do B (gdy symbol==A); w innych przypadkach jadę „do siebie”
+    rotate_ring: bool = False     # jeśli True – wykonaj losową rotację layoutu ringu tuż PRZED startem itemu (tylko wizualnie)
+    tail_sec: float = 0.20        # chwila, aby symbol "doszedł" i zniknął estetycznie
 
+class TutorialPlayer:
+    def __init__(self, game: 'Game', items: list[DemoItem], *,
+                 caption: str = "",
+                 mapping_pair: Optional[tuple[str,str]] = None,
+                 show_mapping_banner: bool = False,
+                 sequential: bool = True,
+                 seq_gap: float = 0.12):   
+        self.g = game
+        self.caption = caption
+
+        # niezależny czas tutorialu
+        self.t0 = game.now()
+
+        # własna kopia układu ringu (nie ruszamy stanu gry)
+        self.ring_layout: dict[str,str] = dict(game.ring_layout)
+
+        # sekwencja
+        self.items = sorted(items, key=lambda it: it.at)
+        self._spawned_idx: int = -1      
+        self._active: list[dict] = []
+
+        # mapping & baner
+        self.mapping_pair = mapping_pair  # np. ('CIRCLE','TRIANGLE')
+        self.show_mapping_banner = bool(show_mapping_banner)
+        self.banner_start_t = self.g.now() if show_mapping_banner and mapping_pair else None
+
+        # sterowanie sekwencją
+        self.sequential = bool(sequential)
+        self.seq_gap = float(seq_gap)
+        self._next_ready_at = self.t0  
+
+    # --- pomocnicze ---
+    def _pos_for_symbol(self, sym: str) -> str:
+        return next(p for p, s in self.ring_layout.items() if s == sym)
+
+    def _target_for(self, sym: str, use_mapping: bool) -> str:
+        if use_mapping and self.mapping_pair and sym == self.mapping_pair[0]:
+            return self._pos_for_symbol(self.mapping_pair[1])
+        return self._pos_for_symbol(sym)
+
+    # --- fazy ---
+    def update(self):
+        now = self.g.now()
+        t = now - self.t0
+
+        # 1) usuń „martwe” instancje + jeśli właśnie skończyły się wszystkie, ustaw czas gotowości na następną
+        still = []
+        just_became_empty = False
+        before = bool(self._active)
+        for inst in self._active:
+            it: DemoItem = inst['item']
+            started: float = inst['started']
+            slide_start = inst['slide_start']
+
+            # start slajdu po opóźnieniu
+            if slide_start is None and (now - started) >= max(0.0, it.slide_delay):
+                inst['slide_start'] = now
+                slide_start = now
+
+            # całkowite „życie” instancji: delay + duration + tail
+            life = it.slide_delay + it.slide_duration + it.tail_sec
+            if (now - started) <= life:
+                still.append(inst)
+        self._active = still
+        if before and not self._active:
+            just_became_empty = True
+            self._next_ready_at = now + self.seq_gap   # mały oddech zanim ruszy kolejna
+
+        # 2) SEKWENCYJNE spawnowanie następnych
+        #    - jeśli sekwencyjny: spawnuj następną TYLKO gdy nic nie jest aktywne i minął _next_ready_at
+        #    - jeśli nie: spawnuj według 'at' (stary równoległy tryb)
+        if self.sequential:
+            if not self._active and (self._spawned_idx + 1) < len(self.items):
+                nxt = self.items[self._spawned_idx + 1]
+                # opcjonalnie respektuj jego 'at' (możesz mieć wszystkie na 0.0)
+                if t >= max(nxt.at, 0.0) and now >= self._next_ready_at:
+                    self._spawned_idx += 1
+                    it = self.items[self._spawned_idx]
+                    # lokalna rotacja układu dla tej scenki
+                    if it.rotate_ring:
+                        order = ['TOP','RIGHT','BOTTOM','LEFT']
+                        syms = [self.ring_layout[p] for p in order]
+                        random.shuffle(syms)
+                        for p, s in zip(order, syms):
+                            self.ring_layout[p] = s
+                    self._active.append({'item': it, 'started': now, 'slide_start': None})
+        else:
+            # tryb równoległy (stary): spawnuj wszystkie, których 'at' już minęło
+            while (self._spawned_idx + 1) < len(self.items) and self.items[self._spawned_idx + 1].at <= t:
+                self._spawned_idx += 1
+                it = self.items[self._spawned_idx]
+                if it.rotate_ring:
+                    order = ['TOP','RIGHT','BOTTOM','LEFT']
+                    syms = [self.ring_layout[p] for p in order]
+                    random.shuffle(syms)
+                    for p, s in zip(order, syms):
+                        self.ring_layout[p] = s
+                self._active.append({'item': it, 'started': now, 'slide_start': None})
+
+    # --- render ---
+    def _draw_mapping_banner(self):
+        """Prosta animacja banera jak w grze (in→hold→dock)."""
+        if not (self.mapping_pair and self.show_mapping_banner and self.banner_start_t is not None):
+            return
+        g = self.g
+        now = g.now()
+        t = now - self.banner_start_t
+        IN, HOLD, OUT = RULE_BANNER_IN_SEC, RULE_BANNER_HOLD_SEC, RULE_BANNER_TO_TOP_SEC
+        total = IN + HOLD + OUT
+        if t > total:
+            # po animacji – rysuj „pinned”
+            panel, shadow = g._render_rule_panel_surface(self.mapping_pair, RULE_BANNER_PIN_SCALE, RULE_SYMBOL_SCALE_PINNED, label_font=g.rule_font_pinned)
+            pw, ph = panel.get_size()
+            px = (g.w - pw)//2
+            py = int(getattr(g, "_rule_pinned_y", g.topbar_rect.bottom + g.px(12)))
+            g.screen.blit(shadow, (px+3, py+5))
+            g.screen.blit(panel, (px, py))
+            return
+
+        if t <= IN:             # wejście z góry
+            p = g._ease_out_cubic(t / max(1e-6, IN))
+            panel_scale = RULE_BANNER_PIN_SCALE + (1.0 - RULE_BANNER_PIN_SCALE) * p
+            symbol_scale = RULE_SYMBOL_SCALE_PINNED + (RULE_SYMBOL_SCALE_CENTER - RULE_SYMBOL_SCALE_PINNED) * p
+            start_y = -int(g.h * 0.35)
+            mid_y = int(g.h * 0.30)
+            y = int(start_y + (mid_y - start_y) * p)
+            font = g.rule_font_center
+        elif t <= IN + HOLD:    # hold w centrum
+            panel_scale = 1.0; symbol_scale = RULE_SYMBOL_SCALE_CENTER
+            mid_y = int(g.h * 0.30); y = mid_y
+            font = g.rule_font_center
+        else:                   # wyjście w dół do „pinned”
+            p = g._ease_out_cubic((t - IN - HOLD) / max(1e-6, OUT))
+            panel_scale = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * p
+            symbol_scale = RULE_SYMBOL_SCALE_CENTER + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * p
+            mid_y = int(g.h * 0.30)
+            pinned_y = int(getattr(g, "_rule_pinned_y", g.topbar_rect.bottom + g.px(12)))
+            y = int(mid_y + (pinned_y - mid_y) * p)
+            font = g.rule_font_pinned
+
+        panel, shadow = g._render_rule_panel_surface(self.mapping_pair, panel_scale, symbol_scale, label_font=font)
+        pw, ph = panel.get_size()
+        px = (g.w - pw)//2
+        g.screen.blit(shadow, (px+3, y+5))
+        g.screen.blit(panel, (px, y))
+
+    def draw(self):
+        g = self.g
+        g._blit_bg()
+
+        # geometra
+        base_size = int(g.w * SYMBOL_BASE_SIZE_FACTOR)
+        cx, cy = int(g.w * 0.5), int(g.h * CENTER_Y_FACTOR)
+
+        # ring
+        g._draw_input_ring_progressive((cx, cy), base_size, layout=self.ring_layout)
+
+        # baner
+        self._draw_mapping_banner()
+
+        # aktywne instancje
+        for inst in self._active:
+            it: DemoItem = inst['item']
+            started: float = inst['started']
+            slide_start = inst['slide_start']
+
+            target_pos = self._target_for(it.symbol, it.use_mapping)
+
+            if slide_start is None:
+                rect = pygame.Rect(0, 0, base_size, base_size); rect.center = (cx, cy)
+                g.draw_symbol(g.screen, it.symbol, rect)
+            else:
+                prog = (g.now() - slide_start) / max(1e-6, it.slide_duration)
+                prog = 0.0 if prog < 0 else 1.0 if prog > 1 else prog
+                eased = g._ease_out_cubic(prog)
+
+                r = int(base_size * RING_RADIUS_FACTOR)
+                pos_xy = {"TOP":(cx,cy-r), "RIGHT":(cx+r,cy), "LEFT":(cx-r,cy), "BOTTOM":(cx,cy+r)}
+                tx, ty = pos_xy[target_pos]
+                ex = int(cx + (tx - cx) * 1.2 * eased)
+                ey = int(cy + (ty - cy) * 1.2 * eased)
+
+                scale = (1.0 - 0.25 * eased)
+                size = max(1, int(g.w * SYMBOL_BASE_SIZE_FACTOR * scale))
+                srf = pygame.Surface((size, size), pygame.SRCALPHA)
+                g.draw_symbol(srf, it.symbol, srf.get_rect())
+
+                # fade podczas slajdu, a po slajdzie „ogon” znika do zera w czasie tail_sec
+                if prog < 1.0:
+                    alpha = 255
+                else:
+                    tail = max(1e-6, it.tail_sec)
+                    post = (g.now() - (slide_start + it.slide_duration)) / tail
+                    alpha = max(0, int(255 * (1.0 - max(0.0, min(1.0, post)))))
+                srf.set_alpha(alpha)
+
+                g.screen.blit(srf, (ex - size//2, ey - size//2))
+
+        # podpis (jeśli chcesz — tak jak miałeś)
+        if self.caption:
+            tw, th = g.mid.size(self.caption)
+            g.draw_text(g.mid, self.caption, (g.w/2 - tw/2, cy + base_size//2 + g.px(18)), color=ACCENT)
+
+def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer']:
+    # wygodne aliasy
+    SYM = lambda: random.choice(SYMS)
+
+    # === LEVEL 1 — Classic (3 scenki, wolniejsza animacja) ===
+    if level == 1:
+        # trzy różne symbole, każdy rusza po 1.0s, jedzie do „swojego” miejsca
+        items = [
+            DemoItem(at=0.0, symbol="SQUARE",   slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
+            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
+            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
+        ]
+        return TutorialPlayer(g, items, caption="Trafiaj ten sam symbol na ringu.",
+                            mapping_pair=None, show_mapping_banner=False,
+                            sequential=True, seq_gap=0.12)
+
+    # === LEVEL 2 — Mapping A⇒B (baner + 3 scenki) ===
+    if level == 2:
+        # losujemy mapping i pokazujemy baner (in→hold→dock)
+        a = SYM()
+        b = random.choice([s for s in SYMS if s != a])
+
+        # 1) symbol A — rusza do B (use_mapping=True)
+        # 2) symbol „neutralny” — rusza „do siebie”
+        # 3) znów A — utrwalenie
+        neutral = random.choice([s for s in SYMS if s not in (a, b)])
+
+        items = [
+            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+            DemoItem(at=1.1,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False),
+            DemoItem(at=2.2,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+        ]
+        cap = f"Mapping: gdy widzisz {a}, naciśnij {b}."
+        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True)
+
+    # === LEVEL 3 — Rotacje (3 scenki + dwie rotacje wizualne) ===
+    if level == 3:
+        items = [
+            DemoItem(at=0.0,  symbol="CROSS",   slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
+            DemoItem(at=1.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
+            DemoItem(at=2.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
+        ]
+        return TutorialPlayer(g, items, caption="Ring rotuje – obserwuj położenia.")
+
+    # === LEVEL 4 — Mix (rotacje + mapping; baner + 3 scenki) ===
+    if level == 4:
+        a = SYM()
+        b = random.choice([s for s in SYMS if s != a])
+        neutral = random.choice([s for s in SYMS if s not in (a, b)])
+        items = [
+            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True, rotate_ring=True),
+            DemoItem(at=1.1,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False, rotate_ring=True),
+            DemoItem(at=2.2,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+        ]
+        cap = f"Uwaga: rotacje i mapping ({a} ⇒ {b})."
+        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True)
+
+    # === LEVEL 5 — Memory (3 scenki, bez HUD; tylko idea) ===
+    if level == 5:
+        items = [
+            DemoItem(at=0.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=1.0,  symbol="CIRCLE",  slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=2.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
+        ]
+        return TutorialPlayer(g, items, caption="Zapamiętaj układ — w trakcie znikną ikony.")
+
+    return None
+
+# ========= GAME =========
 class Game:
 
     # ---- Inicjalizacja i podstawy cyklu życia ----
@@ -898,6 +1177,7 @@ class Game:
         self.images = IMAGES
         self.mode: Mode = mode
         self.scene: Scene = Scene.MENU
+        self.tutorial: Optional[TutorialPlayer] = None
 
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
@@ -1569,6 +1849,7 @@ class Game:
         self.instruction_text = self.level_cfg.instruction or f"LEVEL {lvl}"
         self.instruction_until = self.now() + float(self.level_cfg.instruction_sec or 0.0)
         self.scene = Scene.INSTRUCTION
+        self.tutorial = build_tutorial_for_level(self, lvl)
 
         if self.level_cfg.rotations_per_level > 0:
             self._rotate_ring_random()
@@ -1628,6 +1909,7 @@ class Game:
 
     def _enter_gameplay_after_instruction(self) -> None:
         self.scene = Scene.GAME
+        self.tutorial = None
         if self.mode is Mode.TIMED:
             self._last_tick = self.now()
 
@@ -1819,6 +2101,8 @@ class Game:
         # INSTRUKCJA: czekamy do końca timera albo na skip
         if self.scene is Scene.INSTRUCTION:
             _ = iq.pop_all()
+            if self.tutorial:
+                self.tutorial.update()
             if now >= self.instruction_until:
                 self._enter_gameplay_after_instruction()
             return
@@ -2462,7 +2746,7 @@ class Game:
         p1 = _pal(names[i]); p2 = _pal(names[i+1])
         return _lerp_pal(p1, p2, t)
 
-    def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int) -> None:
+    def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
         cx, cy = center
         r = int(base_size * RING_RADIUS_FACTOR)
 
@@ -2571,8 +2855,11 @@ class Game:
             return
         icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
         pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
+        active_layout = layout if layout is not None else self.ring_layout
         for pos, (ix, iy) in pos_xy.items():
-            name = self.ring_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+            name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
+            self.draw_symbol(self.screen, name, rect)
             rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
             self.draw_symbol(self.screen, name, rect)
 
@@ -2787,17 +3074,24 @@ class Game:
                 self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, base_y + h1 + help_gap))
             
             elif self.scene is Scene.INSTRUCTION:
+                # tło + nagłówek
                 self._blit_bg()
                 lines = (self.instruction_text or f"LEVEL {self.level}").splitlines()
-                y = self.h * 0.30
+                y = self.h * 0.18
                 for i, L in enumerate(lines):
                     f = self.big if i == 0 else self.mid
                     tw, th = f.size(L)
                     self.draw_text(f, L, (self.w/2 - tw/2, y))
                     y += th + self.px(10)
+
+                # POKAZ: ring + centralny symbol + animacja ruchu → bez HUD/score
+                if self.tutorial:
+                    self.tutorial.draw()
+
+                # hint „skip”
                 hint = "ENTER/SPACE = start"
                 hw, hh = self.font.size(hint)
-                self.draw_text(self.font, hint, (self.w/2 - hw/2, y + self.px(24)), color=ACCENT)
+                self.draw_text(self.font, hint, (self.w/2 - hw/2, int(self.h * 0.90)), color=ACCENT)
 
         finally:
             self.screen = old_screen
