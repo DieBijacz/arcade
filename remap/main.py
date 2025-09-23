@@ -78,10 +78,6 @@ class InputQueue:
 # ========= CONSTANTS =========
 # Kolory bazowe UI / tła
 BG = (8, 10, 12)                 # kolor tła sceny, gdy brak obrazka bg
-PAD = (40, 44, 52)               # kolor płytek/paneli neutralnych (nieużywane teraz – zostawione na przyszłość)
-PAD_HI = (90, 200, 255)          # kolor podświetlenia płytek/paneli
-PAD_GOOD = (60, 200, 120)        # kolor akcji poprawnej
-PAD_BAD = (220, 80, 80)          # kolor akcji błędnej
 INK = (235, 235, 235)            # podstawowy kolor tekstu
 ACCENT = (255, 210, 90)          # akcent (nagłówki, ważne etykiety)
 
@@ -106,13 +102,7 @@ FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
 
 # --- Levels --- (progresja poziomów)
 LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
-LEVEL_MAX = 5                    # maks. zdefiniowany poziom (na przyszłość)
 LEVELS_ACTIVE_FOR_NOW = 5        # faktycznie używana liczba poziomów
-
-LEVEL_COLORS = {                 # kolor wyniku (kapsuła) per poziom
-    1: (235, 235, 235),
-    2: (60, 200, 120),
-}
 
 # Tempo gry i tryby
 TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]  # startowy czas na reakcję (tryb SPEEDUP)
@@ -120,7 +110,6 @@ TARGET_TIME_MIN = CFG["speedup"]["target_time_min"]          # dolne ograniczeni
 TARGET_TIME_STEP = CFG["speedup"]["target_time_step"]        # zmiana czasu po każdym trafieniu
 TIMED_DURATION = CFG["timed"]["duration"]                    # czas całej rundy w trybie TIMED
 RULE_EVERY_HITS = CFG["rules"]["every_hits"]                 # co ile trafień losujemy nową regułę (poziom 2+)
-RULE_BANNER_SEC = CFG["rules"]["banner_sec"]                 # (pozostawione dla kompatybilności)
 MAX_LIVES = CFG["lives"]                                     # liczba żyć w SPEEDUP (jeśli >0)
 ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))  # bonus sekund po wylosowaniu reguły (TIMED)
 
@@ -146,14 +135,9 @@ SYMBOL_CIRCLE_RADIUS_FACTOR = 0.32        # promień koła względem mniejszego 
 SYMBOL_TRIANGLE_POINT_FACTOR = 0.9        # „ostrość” trójkąta
 SYMBOL_CROSS_K_FACTOR = 1.0               # długość ramion krzyżyka (krotność promienia)
 
-# HUD (górny pasek)
-HUD_TOP_MARGIN_FACTOR = 0.02      # dodatkowy margines pod topbarem (dokowanie banera reguł)
-HUD_SEPARATOR = "   ·   "         # separator tekstowy
-
 # --- Glitch --- (efekt post-process)
 GLITCH_DURATION = 0.20            # długość pojedynczego glitcha
 GLITCH_PIXEL_FACTOR_MAX = 0.10    # maks. pikselizacja (skala downsample)
-GLITCH_FREQ_HZ = 60.0             # tempo migotania/glitchowania pasów
 
 # --- Text Glitch --- (zakłócenia napisów)
 TEXT_GLITCH_DURATION = 0.5        # jak długo trwa glitch tekstu
@@ -161,12 +145,6 @@ TEXT_GLITCH_MIN_GAP = 1           # min przerwa między glitchami
 TEXT_GLITCH_MAX_GAP = 5.0         # max przerwa między glitchami
 TEXT_GLITCH_CHAR_PROB = 0.01      # prawdopodobieństwo podmiany znaku
 TEXT_GLITCH_CHARSET = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"  # z jakich znaków mieszamy
-
-# --- Spawn anim --- (dodatkowe efekty przy pojawieniu symbolu)
-SYMBOL_SPAWN_ANIM_DURATION = 0.40       # łączny czas animacji „pojawienia”
-SYMBOL_SPAWN_GLITCH_DURATION = 0.02     # krótki glitch przy spawnie
-SYMBOL_SPAWN_GLOW_MAX_ALPHA = 20        # maks. intensywność poświaty
-SYMBOL_SPAWN_GLOW_RADIUS_FACTOR = 1.15  # promień poświaty względem symbolu
 
 EXIT_SLIDE_SEC = 0.18   # szybki „zjazd” po poprawnej odpowiedzi
 
@@ -180,7 +158,8 @@ PULSE_KIND_SCALE = {
     "symbol": 1.00,    # puls centralnego symbolu (połowa czasu na reakcję)
     "streak": 1.06,    # puls licznika streak co X trafień
     "banner": 1.04,    # delikatny puls banera gdy „trafisz pod mapping”
-    "score":  1.10,    # NOWE: puls liczby SCORE po zdobyciu punktu
+    "score":  1.10,    # puls liczby SCORE po zdobyciu punktu
+    "timer":  1.10,    # puls paska z czasem
 }
 
 # czas trwania per-element (jeśli nie podasz, użyje PULSE_BASE_DURATION)
@@ -189,12 +168,12 @@ PULSE_KIND_DURATION = {
     "streak": 0.30,
     "banner": 0.30,
     "score":  0.26,
+    "timer":  0.40
 }
 
 # --- Timer bar (bottom) --- (pasek czasu na dole ekranu)
 TIMER_BAR_WIDTH_FACTOR = 0.66     # szerokość paska względem szerokości okna
 TIMER_BAR_HEIGHT = 18             # wysokość paska w px
-TIMER_BAR_MARGIN_TOP = 10         # wewnętrzny margines (niewykorzystywany – zachowany)
 TIMER_BAR_BG = (40, 40, 50)       # kolor tła paska
 TIMER_BAR_FILL = (90, 200, 255)   # kolor wypełnienia (normalny)
 TIMER_BAR_BORDER = (160, 180, 200)# kolor ramki
@@ -216,7 +195,6 @@ RULE_BANNER_PINNED_MARGIN = 25    # px odstępu bannera od kapsuły SCORE
 RULE_BANNER_IN_SEC = 0.35         # czas wejścia banera (z góry)
 RULE_BANNER_HOLD_SEC = 2.0        # czas utrzymania w centrum
 RULE_BANNER_TO_TOP_SEC = 0.35     # czas wyjścia/dokowania do topu
-RULE_BANNER_TOTAL_SEC = RULE_BANNER_IN_SEC + RULE_BANNER_HOLD_SEC + RULE_BANNER_TO_TOP_SEC
 RULE_PANEL_BG = (22, 26, 34, 110) # tło panelu banera (z alpha)
 RULE_PANEL_BORDER = (120, 200, 255)     # obrys panelu
 RULE_PANEL_BORDER_W = 3           # grubość obrysu
@@ -267,11 +245,6 @@ RING_PALETTES = {
 
 # tor dla AUTO (od startu do highscore)
 RING_GRADIENT_ORDER = ["clean-white", "electric-blue", "neon-cyan", "violet-neon", "magenta"]
-
-RING_PALETTE_NAME = CFG.get("ui", {}).get("ring_palette", "neon-cyan")
-def ring_colors():
-    pal = RING_PALETTES.get(RING_PALETTE_NAME, RING_PALETTES["neon-cyan"])
-    return pal["base"], pal["hi"], pal["soft"]
 
 # --- Screens --- (rozmieszczenie elementów w ekranach MENU/OVER/SETTINGS)
 MENU_TITLE_Y_FACTOR = 0.28           # pionowe położenie tytułu w MENU (proporcja wys.)
@@ -339,24 +312,7 @@ WINDOWED_FLAGS = pygame.RESIZABLE  # okno z paskiem tytułu i możliwością zmi
 GPIO_PULL_UP = True                # konfiguracja wejść (pull-up)
 GPIO_BOUNCE_TIME = 0.05            # debounce w sekundach
 
-# --- Keymap --- (mapowanie klawiszy na symbole gry)
-KEYMAP: Dict[int, str] = {
-    pygame.K_UP: "TRIANGLE",
-    pygame.K_RIGHT: "CIRCLE",
-    pygame.K_LEFT: "SQUARE",
-    pygame.K_DOWN: "CROSS",
-    pygame.K_w: "TRIANGLE",
-    pygame.K_d: "CIRCLE",
-    pygame.K_a: "SQUARE",
-    pygame.K_s: "CROSS",
-}
-
-
 def init_gpio(iq: InputQueue):
-    """Create gpiozero Button objects and bind them to the input queue.
-
-    On Windows or if gpiozero is missing, returns an empty dict.
-    """
     if IS_WINDOWS or not GPIO_AVAILABLE:
         return {}
     pins = {"CIRCLE": PINS.CIRCLE, "CROSS": PINS.CROSS, "SQUARE": PINS.SQUARE, "TRIANGLE": PINS.TRIANGLE}
@@ -462,7 +418,6 @@ LEVELS: Dict[int, LevelCfg] = {
 }
 
 def apply_levels_from_cfg(cfg: dict) -> None:
-    """Nadpisz LEVELS danymi z pliku config.json (kolor + hits)."""
     lvl_cfg = cfg.get("levels", {}) or {}
     for k, v in lvl_cfg.items():
         try:
@@ -476,295 +431,7 @@ def apply_levels_from_cfg(cfg: dict) -> None:
                         LEVELS[lid].score_color = (r,g,b)
         except Exception:
             pass
-
-# Zastosuj odczytane ustawienia po zdefiniowaniu LEVELS:
 apply_levels_from_cfg(CFG)
-
-
-# ========= RULE MANAGER =========
-class RuleManager:
-    """Zarządza aktywnymi zasadami oraz aktualnym mappingiem A->B."""
-    def __init__(self):
-        self.active: dict[RuleType, RuleSpec] = {}
-        self.current_mapping: Optional[Tuple[str, str]] = None
-        self.mapping_every_hits = 0
-        self.hits_since_roll = 0
-
-    def install(self, specs: List[RuleSpec]) -> None:
-        self.active.clear()
-        self.current_mapping = None
-        self.mapping_every_hits = 0
-        self.hits_since_roll = 0
-        for s in specs or []:
-            self.active[s.type] = s
-            if s.type is RuleType.MAPPING:
-                self.mapping_every_hits = int(s.periodic_every_hits or 0)
-
-    def on_correct(self) -> bool:
-        """Zwraca True gdy trzeba odświeżyć mapping (co X trafień)."""
-        if RuleType.MAPPING not in self.active or self.mapping_every_hits <= 0:
-            return False
-        self.hits_since_roll += 1
-        if self.hits_since_roll >= self.mapping_every_hits:
-            self.hits_since_roll = 0
-            return True
-        return False
-
-    def roll_mapping(self, syms: List[str]) -> Tuple[str, str]:
-        a = random.choice(syms)
-        b = random.choice([s for s in syms if s != a])
-        if self.current_mapping == (a, b):
-            b = random.choice([s for s in syms if s not in (a, b)])
-        self.current_mapping = (a, b)
-        return self.current_mapping
-
-    def apply(self, stimulus: str) -> str:
-        if self.current_mapping and stimulus == self.current_mapping[0]:
-            return self.current_mapping[1]
-        return stimulus
-
-
-# ========= BANNER MANAGER =========
-class BannerManager:
-    """Trzyma czas animacji banera: in -> hold -> out(dock)."""
-    def __init__(self, in_sec: float, hold_sec: float, out_sec: float):
-        self.in_sec = float(in_sec)
-        self.hold_sec = float(hold_sec)
-        self.out_sec = float(out_sec)
-        self.total = self.in_sec + self.hold_sec + self.out_sec
-        self.active_until = 0.0
-        self.anim_start = 0.0
-        self.from_pinned = False
-
-    def is_active(self, now: float) -> bool:
-        return now < self.active_until
-
-    def start(self, now: float, from_pinned: bool = False) -> None:
-        self.from_pinned = from_pinned
-        self.anim_start = now
-        self.active_until = now + self.total
-
-    def phase(self, now: float) -> Tuple[str, float]:
-        """Zwraca ('in'|'hold'|'out', progress 0..1)."""
-        t = max(0.0, min(self.total, now - self.anim_start))
-        if t <= self.in_sec:
-            return "in", (t / max(1e-6, self.in_sec))
-        if t <= self.in_sec + self.hold_sec:
-            return "hold", 1.0
-        return "out", ((t - self.in_sec - self.hold_sec) / max(1e-6, self.out_sec))
-
-
-# ========= FX MANAGER =========
-class EffectsManager:
-    def __init__(self, now_fn, *, glitch_enabled: bool = True):
-        import random as _rand
-        self._rand = _rand
-        self.now = now_fn
-        # flags
-        self.enabled = bool(glitch_enabled)
-
-        # shake
-        self.shake_start = 0.0
-        self.shake_until = 0.0
-
-        # glitch (post)
-        self.glitch_active_until = 0.0
-        self.glitch_start_time = 0.0
-        self.glitch_mag = 1.0
-
-        # text glitch
-        self.text_glitch_active_until = 0.0
-        self.next_text_glitch_at = self.now() + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
-
-        # pulses
-        self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0) }
-
-        # exit slide (po poprawnej odpowiedzi)
-        self.exit_active = False
-        self.exit_start = 0.0
-        self.exit_symbol: Optional[str] = None
-        self.exit_duration = EXIT_SLIDE_SEC
-
-    # -------- cfg / reset --------
-    def set_enabled(self, on: bool):
-        self.enabled = bool(on)
-        if not self.enabled:
-            self.clear_transients()
-
-    def clear_transients(self):
-        self.shake_start = self.shake_until = 0.0
-        self.glitch_active_until = self.glitch_start_time = 0.0
-        self.glitch_mag = 1.0
-        self.text_glitch_active_until = 0.0
-        self._pulses = {k: (0.0, 0.0) for k in self._pulses}
-
-    # -------- triggers --------
-    def trigger_shake(self, duration: float = SHAKE_DURATION):
-        now = self.now()
-        self.shake_start = now
-        self.shake_until = now + max(0.01, duration)
-
-    def trigger_glitch(self, *, mag: float = 1.0, duration: float = GLITCH_DURATION):
-        if not self.enabled:
-            return
-        now = self.now()
-        self.glitch_mag = max(0.0, mag)
-        self.glitch_active_until = now + max(0.01, duration)
-        self.glitch_start_time = now
-        self.trigger_shake()
-        if self._rand.random() < 0.5:
-            self.trigger_text_glitch()
-
-    def trigger_text_glitch(self, duration: float = TEXT_GLITCH_DURATION):
-        if not self.enabled:
-            return
-        now = self.now()
-        self.text_glitch_active_until = now + max(0.05, duration)
-        self.next_text_glitch_at = now + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
-
-    def maybe_schedule_text_glitch(self):
-        if not self.enabled:
-            return
-        now = self.now()
-        if now >= self.next_text_glitch_at and not self.is_text_glitch_active():
-            self.trigger_text_glitch()
-
-    def is_text_glitch_active(self) -> bool:
-        return self.enabled and (self.now() < self.text_glitch_active_until)
-
-    def trigger_pulse(self, kind: str, duration: float | None = None):
-        if kind not in self._pulses:
-            return
-        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get(kind, PULSE_BASE_DURATION))
-        now = self.now()
-        self._pulses[kind] = (now, now + max(1e-3, dur))
-
-    def trigger_pulse_symbol(self): self.trigger_pulse('symbol')
-    def trigger_pulse_streak(self): self.trigger_pulse('streak')
-    def trigger_pulse_banner(self): self.trigger_pulse('banner')
-
-    # -------- queries / math --------
-    def _pulse_curve01(self, t: float, kind: str) -> float:
-        import math
-        t = max(0.0, min(1.0, t))
-        # skala = baza * mnożnik kind
-        kscale = float(PULSE_KIND_SCALE.get(kind, 1.0))
-        max_scale = float(PULSE_BASE_MAX_SCALE) * kscale
-        return 1.0 + (max_scale - 1.0) * math.sin(math.pi * t)
-
-    def pulse_scale(self, kind: str) -> float:
-        start, until = self._pulses.get(kind, (0.0, 0.0))
-        if start <= 0.0:
-            return 1.0
-        now = self.now()
-        if now >= until:
-            return 1.0
-        dur = max(1e-6, until - start)
-        t = (now - start) / dur
-        return self._pulse_curve01(t, kind)
-    
-    def is_pulse_active(self, kind: str) -> bool:
-        start, until = self._pulses.get(kind, (0.0, 0.0))
-        return start > 0.0 and self.now() < until
-
-    def stop_pulse(self, kind: str):
-        if kind in self._pulses:
-            self._pulses[kind] = (0.0, 0.0)
-
-    def trigger_pulse_score(self): self.trigger_pulse('score')
-
-    def shake_offset(self, screen_w: int) -> tuple[float, float]:
-        import math
-        now = self.now()
-        if now >= self.shake_until: return (0.0, 0.0)
-        sh_t = max(0.0, min(1.0, (now - self.shake_start) / SHAKE_DURATION))
-        env = 1.0 - sh_t
-        amp = screen_w * SHAKE_AMPLITUDE_FACT * env
-        phase = 2.0 * math.pi * SHAKE_FREQ_HZ * (now - self.shake_start)
-        dx = amp * math.sin(phase)
-        dy = 0.5 * amp * math.cos(phase * 0.9)
-        return (dx, dy)
-
-    # -------- post-process glitch --------
-    def apply_postprocess(self, frame: pygame.Surface, w: int, h: int) -> pygame.Surface:
-        if not self.enabled: return frame
-        now = self.now()
-        if now >= self.glitch_active_until: return frame
-
-        dur = max(1e-6, GLITCH_DURATION)
-        t = 1.0 - (self.glitch_active_until - now) / dur
-        vigor = (1 - abs(0.5 - t) * 2)
-        strength = max(0.0, min(1.0, vigor * self.glitch_mag))
-
-        # 1) pixelation
-        pf = GLITCH_PIXEL_FACTOR_MAX * strength
-        out = frame
-        if pf > 0:
-            sw, sh = max(1, int(w * (1 - pf))), max(1, int(h * (1 - pf)))
-            small = pygame.transform.smoothscale(frame, (sw, sh))
-            out = pygame.transform.scale(small, (w, h))
-
-        # 2) RGB split
-        ch_off = int(6 * strength) + self._rand.randint(0, 2)
-        if ch_off:
-            base = out.copy()
-            for (mask, dx, dy) in (
-                ((255, 0, 0, 255), ch_off, 0),
-                ((0, 255, 0, 255), -ch_off, 0),
-                ((0, 0, 255, 255), 0, ch_off),
-            ):
-                chan = base.copy()
-                tint = pygame.Surface((w, h), pygame.SRCALPHA)
-                tint.fill(mask)
-                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
-
-        # 3) displaced horizontal bands
-        if self._rand.random() < 0.9:
-            bands = self._rand.randint(2, 4)
-            band_h = max(4, h // (bands * 8))
-            for _ in range(bands):
-                y = self._rand.randint(0, h - band_h)
-                dx = self._rand.randint(-int(w * 0.03 * strength), int(w * 0.03 * strength))
-                slice_rect = pygame.Rect(0, y, w, band_h)
-                slice_surf = out.subsurface(slice_rect).copy()
-                out.blit(slice_surf, (dx, y))
-
-        # 4) colored blocks
-        if self._rand.random() < 0.4 * strength:
-            bw = self._rand.randint(w // 12, w // 4)
-            bh = self._rand.randint(h // 24, h // 8)
-            x = self._rand.randint(0, max(0, w - bw))
-            y = self._rand.randint(0, max(0, h - bh))
-            col = (
-                self._rand.randint(180, 255),
-                self._rand.randint(120, 255),
-                self._rand.randint(120, 255),
-                self._rand.randint(40, 100),
-            )
-            pygame.draw.rect(out, col, (x, y, bw, bh))
-        return out
-
-    def start_exit_slide(self, symbol: str, duration: float = EXIT_SLIDE_SEC):
-        self.exit_symbol = symbol
-        self.exit_duration = max(0.05, float(duration))
-        self.exit_start = self.now()
-        self.exit_active = True
-
-    def is_exit_active(self) -> bool:
-        return self.exit_active and (self.now() - self.exit_start) <= self.exit_duration
-
-    def exit_progress(self) -> float:
-        if not self.exit_active:
-            return 0.0
-        t = (self.now() - self.exit_start) / max(1e-6, self.exit_duration)
-        return max(0.0, min(1.0, t))
-
-    def clear_exit(self):
-        self.exit_active = False
-        self.exit_symbol = None
-        self.exit_start = 0.0
-
 
 # ========= TUTORIAL =========
 @dataclass
@@ -973,7 +640,7 @@ class TutorialPlayer:
         cx, cy = int(g.w * 0.5), int(g.h * CENTER_Y_FACTOR)
 
         # ring
-        g._draw_input_ring_progressive((cx, cy), base_size, layout=self.ring_layout)
+        g.ring.draw((cx, cy), base_size, layout=self.ring_layout)
 
         # baner
         self._draw_mapping_banner()
@@ -1088,6 +755,463 @@ def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer'
 
     return None
 
+# ========= RULE MANAGER =========
+class RuleManager:
+    """Zarządza aktywnymi zasadami oraz aktualnym mappingiem A->B."""
+    def __init__(self):
+        self.active: dict[RuleType, RuleSpec] = {}
+        self.current_mapping: Optional[Tuple[str, str]] = None
+        self.mapping_every_hits = 0
+        self.hits_since_roll = 0
+
+    def install(self, specs: List[RuleSpec]) -> None:
+        self.active.clear()
+        self.current_mapping = None
+        self.mapping_every_hits = 0
+        self.hits_since_roll = 0
+        for s in specs or []:
+            self.active[s.type] = s
+            if s.type is RuleType.MAPPING:
+                self.mapping_every_hits = int(s.periodic_every_hits or 0)
+
+    def on_correct(self) -> bool:
+        """Zwraca True gdy trzeba odświeżyć mapping (co X trafień)."""
+        if RuleType.MAPPING not in self.active or self.mapping_every_hits <= 0:
+            return False
+        self.hits_since_roll += 1
+        if self.hits_since_roll >= self.mapping_every_hits:
+            self.hits_since_roll = 0
+            return True
+        return False
+
+    def roll_mapping(self, syms: List[str]) -> Tuple[str, str]:
+        a = random.choice(syms)
+        b = random.choice([s for s in syms if s != a])
+        if self.current_mapping == (a, b):
+            b = random.choice([s for s in syms if s not in (a, b)])
+        self.current_mapping = (a, b)
+        return self.current_mapping
+
+    def apply(self, stimulus: str) -> str:
+        if self.current_mapping and stimulus == self.current_mapping[0]:
+            return self.current_mapping[1]
+        return stimulus
+
+# ========= BANNER MANAGER =========
+class BannerManager:
+    """Trzyma czas animacji banera: in -> hold -> out(dock)."""
+    def __init__(self, in_sec: float, hold_sec: float, out_sec: float):
+        self.in_sec = float(in_sec)
+        self.hold_sec = float(hold_sec)
+        self.out_sec = float(out_sec)
+        self.total = self.in_sec + self.hold_sec + self.out_sec
+        self.active_until = 0.0
+        self.anim_start = 0.0
+        self.from_pinned = False
+
+    def is_active(self, now: float) -> bool:
+        return now < self.active_until
+
+    def start(self, now: float, from_pinned: bool = False) -> None:
+        self.from_pinned = from_pinned
+        self.anim_start = now
+        self.active_until = now + self.total
+
+    def phase(self, now: float) -> Tuple[str, float]:
+        """Zwraca ('in'|'hold'|'out', progress 0..1)."""
+        t = max(0.0, min(self.total, now - self.anim_start))
+        if t <= self.in_sec:
+            return "in", (t / max(1e-6, self.in_sec))
+        if t <= self.in_sec + self.hold_sec:
+            return "hold", 1.0
+        return "out", ((t - self.in_sec - self.hold_sec) / max(1e-6, self.out_sec))
+
+# ========= FX MANAGER =========
+class EffectsManager:
+    def __init__(self, now_fn, *, glitch_enabled: bool = True):
+        import random as _rand
+        self._rand = _rand
+        self.now = now_fn
+        # flags
+        self.enabled = bool(glitch_enabled)
+
+        # shake
+        self.shake_start = 0.0
+        self.shake_until = 0.0
+
+        # glitch (post)
+        self.glitch_active_until = 0.0
+        self.glitch_start_time = 0.0
+        self.glitch_mag = 1.0
+
+        # text glitch
+        self.text_glitch_active_until = 0.0
+        self.next_text_glitch_at = self.now() + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
+
+        # pulses
+        self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0), 'timer': (0.0, 0.0) }
+
+        # exit slide (po poprawnej odpowiedzi)
+        self.exit_active = False
+        self.exit_start = 0.0
+        self.exit_symbol: Optional[str] = None
+        self.exit_duration = EXIT_SLIDE_SEC
+
+    # -------- cfg / reset --------
+    def set_enabled(self, on: bool):
+        self.enabled = bool(on)
+        if not self.enabled:
+            self.clear_transients()
+
+    def clear_transients(self):
+        self.shake_start = self.shake_until = 0.0
+        self.glitch_active_until = self.glitch_start_time = 0.0
+        self.glitch_mag = 1.0
+        self.text_glitch_active_until = 0.0
+        self._pulses = {k: (0.0, 0.0) for k in self._pulses}
+
+    # -------- triggers --------
+    def trigger_shake(self, duration: float = SHAKE_DURATION):
+        now = self.now()
+        self.shake_start = now
+        self.shake_until = now + max(0.01, duration)
+
+    def trigger_glitch(self, *, mag: float = 1.0, duration: float = GLITCH_DURATION):
+        if not self.enabled:
+            return
+        now = self.now()
+        self.glitch_mag = max(0.0, mag)
+        self.glitch_active_until = now + max(0.01, duration)
+        self.glitch_start_time = now
+        self.trigger_shake()
+        if self._rand.random() < 0.5:
+            self.trigger_text_glitch()
+
+    def trigger_text_glitch(self, duration: float = TEXT_GLITCH_DURATION):
+        if not self.enabled:
+            return
+        now = self.now()
+        self.text_glitch_active_until = now + max(0.05, duration)
+        self.next_text_glitch_at = now + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
+
+    def maybe_schedule_text_glitch(self):
+        if not self.enabled:
+            return
+        now = self.now()
+        if now >= self.next_text_glitch_at and not self.is_text_glitch_active():
+            self.trigger_text_glitch()
+
+    def is_text_glitch_active(self) -> bool:
+        return self.enabled and (self.now() < self.text_glitch_active_until)
+
+    def trigger_pulse(self, kind: str, duration: float | None = None):
+        if kind not in self._pulses:
+            return
+        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get(kind, PULSE_BASE_DURATION))
+        now = self.now()
+        self._pulses[kind] = (now, now + max(1e-3, dur))
+
+    def trigger_pulse_symbol(self): self.trigger_pulse('symbol')
+    def trigger_pulse_streak(self): self.trigger_pulse('streak')
+    def trigger_pulse_banner(self): self.trigger_pulse('banner')
+
+    # -------- queries / math --------
+    def _pulse_curve01(self, t: float, kind: str) -> float:
+        import math
+        t = max(0.0, min(1.0, t))
+        # skala = baza * mnożnik kind
+        kscale = float(PULSE_KIND_SCALE.get(kind, 1.0))
+        max_scale = float(PULSE_BASE_MAX_SCALE) * kscale
+        return 1.0 + (max_scale - 1.0) * math.sin(math.pi * t)
+
+    def pulse_scale(self, kind: str) -> float:
+        start, until = self._pulses.get(kind, (0.0, 0.0))
+        if start <= 0.0:
+            return 1.0
+        now = self.now()
+        if now >= until:
+            return 1.0
+        dur = max(1e-6, until - start)
+        t = (now - start) / dur
+        return self._pulse_curve01(t, kind)
+    
+    def is_pulse_active(self, kind: str) -> bool:
+        start, until = self._pulses.get(kind, (0.0, 0.0))
+        return start > 0.0 and self.now() < until
+
+    def stop_pulse(self, kind: str):
+        if kind in self._pulses:
+            self._pulses[kind] = (0.0, 0.0)
+
+    def trigger_pulse_score(self): self.trigger_pulse('score')
+
+    def shake_offset(self, screen_w: int) -> tuple[float, float]:
+        import math
+        now = self.now()
+        if now >= self.shake_until: return (0.0, 0.0)
+        sh_t = max(0.0, min(1.0, (now - self.shake_start) / SHAKE_DURATION))
+        env = 1.0 - sh_t
+        amp = screen_w * SHAKE_AMPLITUDE_FACT * env
+        phase = 2.0 * math.pi * SHAKE_FREQ_HZ * (now - self.shake_start)
+        dx = amp * math.sin(phase)
+        dy = 0.5 * amp * math.cos(phase * 0.9)
+        return (dx, dy)
+
+    # -------- post-process glitch --------
+    def apply_postprocess(self, frame: pygame.Surface, w: int, h: int) -> pygame.Surface:
+        if not self.enabled: return frame
+        now = self.now()
+        if now >= self.glitch_active_until: return frame
+
+        dur = max(1e-6, GLITCH_DURATION)
+        t = 1.0 - (self.glitch_active_until - now) / dur
+        vigor = (1 - abs(0.5 - t) * 2)
+        strength = max(0.0, min(1.0, vigor * self.glitch_mag))
+
+        # 1) pixelation
+        pf = GLITCH_PIXEL_FACTOR_MAX * strength
+        out = frame
+        if pf > 0:
+            sw, sh = max(1, int(w * (1 - pf))), max(1, int(h * (1 - pf)))
+            small = pygame.transform.smoothscale(frame, (sw, sh))
+            out = pygame.transform.scale(small, (w, h))
+
+        # 2) RGB split
+        ch_off = int(6 * strength) + self._rand.randint(0, 2)
+        if ch_off:
+            base = out.copy()
+            for (mask, dx, dy) in (
+                ((255, 0, 0, 255), ch_off, 0),
+                ((0, 255, 0, 255), -ch_off, 0),
+                ((0, 0, 255, 255), 0, ch_off),
+            ):
+                chan = base.copy()
+                tint = pygame.Surface((w, h), pygame.SRCALPHA)
+                tint.fill(mask)
+                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
+
+        # 3) displaced horizontal bands
+        if self._rand.random() < 0.9:
+            bands = self._rand.randint(2, 4)
+            band_h = max(4, h // (bands * 8))
+            for _ in range(bands):
+                y = self._rand.randint(0, h - band_h)
+                dx = self._rand.randint(-int(w * 0.03 * strength), int(w * 0.03 * strength))
+                slice_rect = pygame.Rect(0, y, w, band_h)
+                slice_surf = out.subsurface(slice_rect).copy()
+                out.blit(slice_surf, (dx, y))
+
+        # 4) colored blocks
+        if self._rand.random() < 0.4 * strength:
+            bw = self._rand.randint(w // 12, w // 4)
+            bh = self._rand.randint(h // 24, h // 8)
+            x = self._rand.randint(0, max(0, w - bw))
+            y = self._rand.randint(0, max(0, h - bh))
+            col = (
+                self._rand.randint(180, 255),
+                self._rand.randint(120, 255),
+                self._rand.randint(120, 255),
+                self._rand.randint(40, 100),
+            )
+            pygame.draw.rect(out, col, (x, y, bw, bh))
+        return out
+
+    def start_exit_slide(self, symbol: str, duration: float = EXIT_SLIDE_SEC):
+        self.exit_symbol = symbol
+        self.exit_duration = max(0.05, float(duration))
+        self.exit_start = self.now()
+        self.exit_active = True
+
+    def is_exit_active(self) -> bool:
+        return self.exit_active and (self.now() - self.exit_start) <= self.exit_duration
+
+    def exit_progress(self) -> float:
+        if not self.exit_active:
+            return 0.0
+        t = (self.now() - self.exit_start) / max(1e-6, self.exit_duration)
+        return max(0.0, min(1.0, t))
+
+    def clear_exit(self):
+        self.exit_active = False
+        self.exit_symbol = None
+        self.exit_start = 0.0
+
+# ========= RING =========
+class InputRing:
+    def __init__(self, game: 'Game'):
+        self.g = game  # miękka zależność na Game (wymiary, level, palety, fonty, itd.)
+
+    # --- helpers (lokalne – czysto graficzne) ---
+    @staticmethod
+    def _arc(surface, C: int, rad: int, frac: float, thick: int, color, *, start: float = 0.0):
+        frac = max(0.0, min(1.0, float(frac)))
+        rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+        a0 = float(start); a1 = a0 + 2*math.pi*frac
+        pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
+
+    @staticmethod
+    def _ticks(surface, C: int, rad: int, count: int, long_every: int = 4, color=(255,255,255,120)):
+        for i in range(count):
+            ang = (i / count) * 2*math.pi
+            s, c = math.sin(ang), math.cos(ang)
+            r1 = rad + (8 if (i % long_every == 0) else 3)
+            r2 = rad - (12 if (i % long_every == 0) else 5)
+            x1, y1 = int(C + c*r1), int(C + s*r1)
+            x2, y2 = int(C + c*r2), int(C + s*r2)
+            pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
+
+    @staticmethod
+    def _dashed_ring(surface, C: int, rad: int, *, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
+        dash = math.radians(dash_deg); gap = math.radians(gap_deg)
+        rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+        a = 0.0
+        col = color or (255,255,255)
+        while a < 2*math.pi:
+            pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
+            a += dash + gap
+
+    # --- API ---
+    def draw(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
+        """Rysuje ring wraz z ikonami (o ile nie są ukryte przez memory)."""
+        g = self.g
+        cx, cy = center
+        r = int(base_size * RING_RADIUS_FACTOR)
+
+        base, hi, soft = g.ring_colors()
+
+        # czas i prędkości obrotów – jak wcześniej, korzystamy z czasu gry
+        t = g.now() - getattr(g, "_ring_anim_start", g.now())
+        base_cw  = 40 + 6 * (g.level - 1)
+        base_ccw = 60 + 8 * (g.level - 1)
+        rot_cw_deg  = -t * base_cw    # rotozoom: minus = CW
+        rot_ccw_deg =  t * base_ccw
+
+        # płótna obrotowe
+        margin = 36
+        side = (r + margin) * 2
+        C = side // 2
+
+        def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
+        def blit_center(surf): g.screen.blit(surf, surf.get_rect(center=(cx, cy)))
+
+        # L1 – fundament
+        l1a = new_layer()
+        self._arc(l1a, C, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
+        l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
+
+        l1b = new_layer()
+        self._arc(l1b, C, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
+        l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
+
+        layers = [l1a, l1b]
+
+        # L2 – od levelu 2
+        if g.level >= 2:
+            l2a = new_layer()
+            self._ticks(l2a, C, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
+            l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
+
+            l2b = new_layer()
+            self._dashed_ring(l2b, C, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
+            l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
+            layers += [l2a, l2b]
+
+        # L3 – scanner (akcent)
+        if g.level >= 3:
+            l3 = new_layer()
+            sweep = math.radians(42)
+            start = t * 1.2
+            rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
+            pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)
+            for w, a in ((12, 60), (20, 35)):
+                pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
+            layers.append(l3)
+
+        # L4 – orbitery
+        if g.level >= 4:
+            l4 = new_layer()
+            orbit_r = int(r * 1.15)
+            for k in range(3):
+                ang = t * 1.4 + k * (2*math.pi/3)
+                x = int(C + math.cos(ang) * orbit_r)
+                y = int(C + math.sin(ang) * orbit_r)
+                pygame.draw.circle(l4, (*base, 170), (x, y), 3)
+            layers.append(l4)
+
+        # L5 – zewnętrzny dashed
+        if g.level >= 5:
+            l5 = new_layer()
+            self._dashed_ring(l5, C, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
+            l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
+            layers.append(l5)
+
+        for L in layers:
+            blit_center(L)
+
+        # Ikony (pomijamy gdy memory ukrywa)
+        if g.level_cfg.memory_mode and not g.memory_show_icons:
+            return
+
+        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+        pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
+        active_layout = layout if layout is not None else g.ring_layout
+        for pos, (ix, iy) in pos_xy.items():
+            name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
+            g.draw_symbol(g.screen, name, rect)
+
+# ========= TIMEBAR =========
+class TimeBar:
+    def __init__(self, game: 'Game'):
+        self.g = game
+
+    def draw(self, ratio: float, label: Optional[str] = None) -> None:
+        g = self.g
+        ratio = max(0.0, min(1.0, ratio))
+        if ratio <= TIMER_BAR_CRIT_TIME:   fill_color = TIMER_BAR_CRIT_COLOR
+        elif ratio <= TIMER_BAR_WARN_TIME: fill_color = TIMER_BAR_WARN_COLOR
+        else:                              fill_color = TIMER_BAR_FILL
+
+        # PULSE WYSOKOŚCI PASKA
+        pulse_scale = g.fx.pulse_scale('timer')
+        bar_w = int(g.w * TIMER_BAR_WIDTH_FACTOR)
+        base_h = int(TIMER_BAR_HEIGHT)
+        bar_h = max(1, int(base_h * pulse_scale))
+        bar_x = (g.w - bar_w) // 2
+        bottom_margin = int(g.h * TIMER_BOTTOM_MARGIN_FACTOR)
+        bar_y = g.h - bottom_margin - bar_h
+
+        # tło
+        pygame.draw.rect(g.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)      
+
+        # wypełnienie
+        fill_w = int(bar_w * ratio)
+        if fill_w > 0:
+            pygame.draw.rect(g.screen, fill_color, (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # ramka
+        pygame.draw.rect(g.screen, TIMER_BAR_BORDER, (bar_x, bar_y, bar_w, bar_h), width=TIMER_BAR_BORDER_W, border_radius=TIMER_BAR_BORDER_RADIUS)
+
+        # pionowy znacznik
+        indicator_x = max(bar_x, min(bar_x + bar_w, bar_x + fill_w))
+        indicator_rect = pygame.Rect(
+            indicator_x - TIMER_POSITION_INDICATOR_W // 2,
+            bar_y - TIMER_POSITION_INDICATOR_PAD,
+            TIMER_POSITION_INDICATOR_W,
+            bar_h + TIMER_POSITION_INDICATOR_PAD * 2,
+        )
+        pygame.draw.rect(g.screen, ACCENT, indicator_rect)
+
+        # podpis nad paskiem
+        if label:
+            timer_font = getattr(g, "timer_font", g.mid)
+            lw, lh = timer_font.size(label)
+            tx = bar_x + (bar_w - lw) // 2
+            ty = bar_y - lh - TIMER_LABEL_GAP
+            g.screen.blit(timer_font.render(label, True, (0, 0, 0)), (tx + 2, ty + 2))
+            g.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
+
 # ========= GAME =========
 class Game:
 
@@ -1161,6 +1285,10 @@ class Game:
         # --- level cfg / ring state ---
         self.level_cfg: LevelCfg = LEVELS[1]
 
+        # --- renderers ---
+        self.ring = InputRing(self)
+        self.timebar = TimeBar(self)
+
         # --- rule / banner manager ---
         self.rules = RuleManager()
         self.banner = BannerManager(RULE_BANNER_IN_SEC, RULE_BANNER_HOLD_SEC, RULE_BANNER_TO_TOP_SEC)
@@ -1191,10 +1319,6 @@ class Game:
         self.instruction_until = 0.0
         self.instruction_text = ""
         self.allow_skip_instruction = True
-
-        # memory (L5)
-        self.memory_show_icons = True          # czy rysować ikony na ringu
-        self.memory_intro_until = 0.0          # kiedy zakończyć podgląd układu
 
         # settings buffer (Settings scene)
         self.settings_scroll = 0.0
@@ -1591,14 +1715,6 @@ class Game:
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
-        
-        if key == "glitch_enabled":
-            self.settings["glitch_enabled"] = not self.settings["glitch_enabled"]
-            if not self.settings["glitch_enabled"]:
-                self.glitch_active_until = 0.0
-                self.text_glitch_active_until = 0.0
-            self.fx.set_enabled(self.settings["glitch_enabled"])
-            return
 
         step = {
             "target_time_initial": 0.1,
@@ -1708,7 +1824,6 @@ class Game:
                 "ui": {"ring_palette": CFG["ui"]["ring_palette"]},
                 "rules": {
                     "every_hits": CFG["rules"].get("every_hits", RULE_EVERY_HITS),
-                    "banner_sec": CFG["rules"].get("banner_sec", RULE_BANNER_SEC),
                     "banner_font_center": CFG["rules"]["banner_font_center"],
                     "banner_font_pinned": CFG["rules"]["banner_font_pinned"],
                 },
@@ -1810,9 +1925,6 @@ class Game:
             self.hits_in_level = 0
             self.apply_level(self.level)  # mapping na starcie odpali się po INSTRUCTION
 
-    def level_value_color(self) -> Tuple[int, int, int]:
-        return getattr(self.level_cfg, "score_color", LEVEL_COLORS.get(self.level, SCORE_VALUE_COLOR))
-
     def new_target(self) -> None:
         prev = self.target
         choices = [s for s in SYMS if s != prev] if prev else SYMS
@@ -1820,6 +1932,7 @@ class Game:
         self.target_deadline = self.now() + self.target_time if self.mode is Mode.SPEEDUP else None
         self.symbol_spawn_time = self.now()
         self.fx.stop_pulse('symbol')
+        self.fx.stop_pulse('timer')
 
     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
         now = self.now()
@@ -2077,18 +2190,24 @@ class Game:
                 self.exit_dir_pos = None
                 self.new_target()
 
-        # --- PULSE SYMBOLU, gdy minęła połowa czasu na target (SPEEDUP) ---
+        # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
         if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
             self.target is not None and self.target_deadline is not None and
             self.target_time > 0):
+
             now = self.now()
             remaining = max(0.0, self.target_deadline - now)
             left_ratio = remaining / max(1e-6, self.target_time)
+
             if left_ratio <= 0.5:
-                # utrzymuj puls do zmiany symbolu lub końca czasu:
-                # jeśli poprzedni cykl się skończył, odpal kolejny
+                # symbol — jednorazowo przy pierwszym wejściu poniżej 50% (opcjonalnie)
                 if not self.fx.is_pulse_active('symbol'):
+                    # jeśli nie chcesz jednorazowego symbolu, usuń tę linijkę
                     self.fx.trigger_pulse_symbol()
+
+                # timer — ma pulsować CAŁY czas od 50% do końca:
+                if not self.fx.is_pulse_active('timer'):
+                    self.fx.trigger_pulse('timer')
 
         # TIMED: upływ czasu
         if self.mode is Mode.TIMED:
@@ -2439,53 +2558,6 @@ class Game:
         self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
         self.screen.blit(panel, (panel_x, panel_y))
 
-    def _draw_timer_bar_bottom(self, ratio: float, label: Optional[str] = None):
-        ratio = max(0.0, min(1.0, ratio))
-        if ratio <= TIMER_BAR_CRIT_TIME:   fill_color = TIMER_BAR_CRIT_COLOR
-        elif ratio <= TIMER_BAR_WARN_TIME: fill_color = TIMER_BAR_WARN_COLOR
-        else:                              fill_color = TIMER_BAR_FILL
-
-        bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
-        bar_h = int(TIMER_BAR_HEIGHT)
-        bar_x = (self.w - bar_w) // 2
-        bottom_margin = int(self.h * TIMER_BOTTOM_MARGIN_FACTOR)
-        bar_y = self.h - bottom_margin - bar_h
-
-        # background
-        pygame.draw.rect(self.screen, TIMER_BAR_BG,
-                         (bar_x, bar_y, bar_w, bar_h),
-                         border_radius=TIMER_BAR_BORDER_RADIUS)
-        # fill
-        fill_w = int(bar_w * ratio)
-        if fill_w > 0:
-            pygame.draw.rect(self.screen, fill_color,
-                             (bar_x, bar_y, fill_w, bar_h),
-                             border_radius=TIMER_BAR_BORDER_RADIUS)
-        # border
-        pygame.draw.rect(self.screen, TIMER_BAR_BORDER,
-                         (bar_x, bar_y, bar_w, bar_h),
-                         width=TIMER_BAR_BORDER_W,
-                         border_radius=TIMER_BAR_BORDER_RADIUS)
-
-        # position tick
-        indicator_x = max(bar_x, min(bar_x + bar_w, bar_x + fill_w))
-        indicator_rect = pygame.Rect(
-            indicator_x - TIMER_POSITION_INDICATOR_W // 2,
-            bar_y - TIMER_POSITION_INDICATOR_PAD,
-            TIMER_POSITION_INDICATOR_W,
-            bar_h + TIMER_POSITION_INDICATOR_PAD * 2,
-        )
-        pygame.draw.rect(self.screen, ACCENT, indicator_rect)
-
-        # label above
-        if label:
-            timer_font = getattr(self, "timer_font", self.mid)
-            lw, lh = timer_font.size(label)
-            tx = bar_x + (bar_w - lw) // 2
-            ty = bar_y - lh - TIMER_LABEL_GAP
-            self.screen.blit(timer_font.render(label, True, (0, 0, 0)), (tx + 2, ty + 2))
-            self.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
-
     def _draw_underline_segment_with_shadow(self, x1: int, x2: int, y: int, th: int, col) -> None:
         if x2 < x1:
             x1, x2 = x2, x1
@@ -2594,7 +2666,7 @@ class Game:
             border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
         )
         label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
-        raw_value_surf = self.score_value_font.render(str(self.score), True, self.level_value_color())
+        raw_value_surf = self.score_value_font.render(str(self.score), True, self.level_cfg.score_color)
 
         gap = 2
 
@@ -2628,11 +2700,11 @@ class Game:
         # Bottom timer (only in-game)
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
-                self._draw_timer_bar_bottom(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
+                self.timebar.draw(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
             elif self.mode is Mode.SPEEDUP and self.target_deadline is not None and self.target_time > 0:
                 remaining = max(0.0, self.target_deadline - self.now())
                 ratio = remaining / max(0.001, self.target_time)
-                self._draw_timer_bar_bottom(ratio, f"{remaining:.1f}s")
+                self.timebar.draw(ratio, f"{remaining:.1f}s")
 
     def _blit_bg(self):
         if self.bg_img:
@@ -2678,122 +2750,122 @@ class Game:
         p1 = _pal(names[i]); p2 = _pal(names[i+1])
         return _lerp_pal(p1, p2, t)
 
-    def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
-        cx, cy = center
-        r = int(base_size * RING_RADIUS_FACTOR)
+    # def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
+    #     cx, cy = center
+    #     r = int(base_size * RING_RADIUS_FACTOR)
 
-        # kolory z wybranej palety
-        base, hi, soft = self.ring_colors()
+    #     # kolory z wybranej palety
+    #     base, hi, soft = self.ring_colors()
 
-        # czas i prędkości obrotów (deg/s) – delikatnie rosną z levelem
-        t = self.now() - self._ring_anim_start
-        base_cw  = 40 + 6 * (self.level - 1)     # clockwise
-        base_ccw = 60 + 8 * (self.level - 1)     # counter-clockwise
-        rot_cw_deg  = -t * base_cw               # rotozoom: minus = CW
-        rot_ccw_deg =  t * base_ccw
+    #     # czas i prędkości obrotów (deg/s) – delikatnie rosną z levelem
+    #     t = self.now() - self._ring_anim_start
+    #     base_cw  = 40 + 6 * (self.level - 1)     # clockwise
+    #     base_ccw = 60 + 8 * (self.level - 1)     # counter-clockwise
+    #     rot_cw_deg  = -t * base_cw               # rotozoom: minus = CW
+    #     rot_ccw_deg =  t * base_ccw
 
-        # lokalne płótna do obracania całych warstw
-        margin = 36
-        side = (r + margin) * 2
-        C = side // 2
-        def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
-        def blit_center(surf):
-            rect = surf.get_rect(center=(cx, cy))
-            self.screen.blit(surf, rect)
+    #     # lokalne płótna do obracania całych warstw
+    #     margin = 36
+    #     side = (r + margin) * 2
+    #     C = side // 2
+    #     def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
+    #     def blit_center(surf):
+    #         rect = surf.get_rect(center=(cx, cy))
+    #         self.screen.blit(surf, rect)
 
-        # helpers
-        def arc(surface, rad, frac, thick, color, *, start=0.0):
-            """Łuk o długości frac*2π (0..1)."""
-            frac = max(0.0, min(1.0, float(frac)))
-            rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-            a0 = float(start); a1 = a0 + 2*math.pi*frac
-            pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
+    #     # helpers
+    #     def arc(surface, rad, frac, thick, color, *, start=0.0):
+    #         """Łuk o długości frac*2π (0..1)."""
+    #         frac = max(0.0, min(1.0, float(frac)))
+    #         rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+    #         a0 = float(start); a1 = a0 + 2*math.pi*frac
+    #         pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
 
-        def ticks(surface, rad, count, long_every=4, color=(255,255,255,120)):
-            for i in range(count):
-                ang = (i / count) * 2*math.pi
-                s, c = math.sin(ang), math.cos(ang)
-                r1 = rad + (8 if (i % long_every == 0) else 3)
-                r2 = rad - (12 if (i % long_every == 0) else 5)
-                x1, y1 = int(C + c*r1), int(C + s*r1)
-                x2, y2 = int(C + c*r2), int(C + s*r2)
-                pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
+    #     def ticks(surface, rad, count, long_every=4, color=(255,255,255,120)):
+    #         for i in range(count):
+    #             ang = (i / count) * 2*math.pi
+    #             s, c = math.sin(ang), math.cos(ang)
+    #             r1 = rad + (8 if (i % long_every == 0) else 3)
+    #             r2 = rad - (12 if (i % long_every == 0) else 5)
+    #             x1, y1 = int(C + c*r1), int(C + s*r1)
+    #             x2, y2 = int(C + c*r2), int(C + s*r2)
+    #             pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
 
-        def dashed_ring(surface, rad, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
-            dash = math.radians(dash_deg); gap = math.radians(gap_deg)
-            rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-            a = 0.0
-            col = color or base
-            while a < 2*math.pi:
-                pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
-                a += dash + gap
+    #     def dashed_ring(surface, rad, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
+    #         dash = math.radians(dash_deg); gap = math.radians(gap_deg)
+    #         rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
+    #         a = 0.0
+    #         col = color or base
+    #         while a < 2*math.pi:
+    #             pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
+    #             a += dash + gap
 
-        # L1 – fundament
-        l1a = new_layer()
-        arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
-        l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
+    #     # L1 – fundament
+    #     l1a = new_layer()
+    #     arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
+    #     l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
 
-        l1b = new_layer()
-        arc(l1b, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
-        l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
+    #     l1b = new_layer()
+    #     arc(l1b, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
+    #     l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
 
-        layers = [l1a, l1b]
+    #     layers = [l1a, l1b]
 
-        # L2 – od levelu 2
-        if self.level >= 2:
-            l2a = new_layer()
-            ticks(l2a, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
-            l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
+    #     # L2 – od levelu 2
+    #     if self.level >= 2:
+    #         l2a = new_layer()
+    #         ticks(l2a, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
+    #         l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
 
-            l2b = new_layer()
-            dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
-            l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
-            layers += [l2a, l2b]
+    #         l2b = new_layer()
+    #         dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
+    #         l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
+    #         layers += [l2a, l2b]
 
-        # L3 – scanner (akcent)
-        if self.level >= 3:
-            l3 = new_layer()
-            sweep = math.radians(42)
-            start = t * 1.2
-            rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
-            pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)  
-            for w, a in ((12, 60), (20, 35)):
-                pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
-            layers.append(l3)
+    #     # L3 – scanner (akcent)
+    #     if self.level >= 3:
+    #         l3 = new_layer()
+    #         sweep = math.radians(42)
+    #         start = t * 1.2
+    #         rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
+    #         pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)  
+    #         for w, a in ((12, 60), (20, 35)):
+    #             pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
+    #         layers.append(l3)
 
-        # === L4 (od levelu 4) – orbitery ===
-        if self.level >= 4:
-            l4 = new_layer()
-            orbit_r = int(r * 1.15)
-            for k in range(3):
-                ang = t * 1.4 + k * (2*math.pi/3)
-                x = int(C + math.cos(ang) * orbit_r)
-                y = int(C + math.sin(ang) * orbit_r)
-                pygame.draw.circle(l4, (*base, 170), (x, y), 3)
-            layers.append(l4)
+    #     # === L4 (od levelu 4) – orbitery ===
+    #     if self.level >= 4:
+    #         l4 = new_layer()
+    #         orbit_r = int(r * 1.15)
+    #         for k in range(3):
+    #             ang = t * 1.4 + k * (2*math.pi/3)
+    #             x = int(C + math.cos(ang) * orbit_r)
+    #             y = int(C + math.sin(ang) * orbit_r)
+    #             pygame.draw.circle(l4, (*base, 170), (x, y), 3)
+    #         layers.append(l4)
 
-        # === L5 (od levelu 5) – zewnętrzny dashed ===
-        if self.level >= 5:
-            l5 = new_layer()
-            dashed_ring(l5, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
-            l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
-            layers.append(l5)
+    #     # === L5 (od levelu 5) – zewnętrzny dashed ===
+    #     if self.level >= 5:
+    #         l5 = new_layer()
+    #         dashed_ring(l5, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
+    #         l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
+    #         layers.append(l5)
 
-        # złożenie
-        for L in layers: blit_center(L)
+    #     # złożenie
+    #     for L in layers: blit_center(L)
 
-        # --- Ikony na ringu (ukrywane w memory) ---
-        if self.level_cfg.memory_mode and not self.memory_show_icons:
-            return
-        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
-        pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
-        active_layout = layout if layout is not None else self.ring_layout
-        for pos, (ix, iy) in pos_xy.items():
-            name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
-            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
-            self.draw_symbol(self.screen, name, rect)
-            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
-            self.draw_symbol(self.screen, name, rect)
+    #     # --- Ikony na ringu (ukrywane w memory) ---
+    #     if self.level_cfg.memory_mode and not self.memory_show_icons:
+    #         return
+    #     icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+    #     pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
+    #     active_layout = layout if layout is not None else self.ring_layout
+    #     for pos, (ix, iy) in pos_xy.items():
+    #         name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+    #         rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
+    #         self.draw_symbol(self.screen, name, rect)
+    #         rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
+    #         self.draw_symbol(self.screen, name, rect)
 
     def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect) -> None:
         age = self.now() - self.symbol_spawn_time
@@ -2849,8 +2921,8 @@ class Game:
         base_rect = pygame.Rect(0, 0, base_size, base_size)
         base_rect.center = (int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR))
 
-        # ring dookoła symbolu
-        self._draw_input_ring_progressive(base_rect.center, base_rect.width)
+        # ring
+        self.ring.draw(base_rect.center, base_size, layout=self.ring_layout)
 
         # jeśli trwa/just-ended exit-slide, NIE rysujemy centralnego symbolu
         if self.exit_dir_pos:
