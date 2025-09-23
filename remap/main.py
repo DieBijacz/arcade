@@ -146,7 +146,8 @@ TEXT_GLITCH_MAX_GAP = 5.0         # max przerwa między glitchami
 TEXT_GLITCH_CHAR_PROB = 0.01      # prawdopodobieństwo podmiany znaku
 TEXT_GLITCH_CHARSET = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"  # z jakich znaków mieszamy
 
-EXIT_SLIDE_SEC = 0.18   # szybki „zjazd” po poprawnej odpowiedzi
+EXIT_SLIDE_SEC = 0.18             # szybki „zjazd” po poprawnej odpowiedzi
+INSTRUCTION_FADE_IN_SEC = 1    # fade na poczatku instukcji zeby nie bylo gwaltownego wejscia
 
 # --- Pulse (FX) ---
 # Baza + per-element modyfikatory (łatwe strojenie intensywności z jednego miejsca)
@@ -494,10 +495,11 @@ class TutorialPlayer:
         now = self.g.now()
         t = now - self.t0
 
-        # 1) usuń „martwe” instancje + jeśli właśnie skończyły się wszystkie, ustaw czas gotowości na następną
+        # 1) update aktywnych
         still = []
         just_became_empty = False
         before = bool(self._active)
+
         for inst in self._active:
             it: DemoItem = inst['item']
             started: float = inst['started']
@@ -510,45 +512,43 @@ class TutorialPlayer:
 
             # całkowite „życie” instancji: delay + duration + tail
             life = it.slide_delay + it.slide_duration + it.tail_sec
-            if (now - started) <= life:
+            alive = (now - started) <= life
+
+            if alive:
                 still.append(inst)
-        self._active = still
+            else:
+                # dopiero co się skończyła ta scenka
+                if it.rotate_ring and not inst.get('rot_scheduled', False):
+                    # odpal animację obrotu ringu (bez glitcha), poczekaj na nią
+                    rot_dur = 0.8
+                    self.g.start_ring_rotation(dur=rot_dur, spins=2.0, swap_at=0.5)
+                    inst['rot_scheduled'] = True
+                    # następna scenka najwcześniej po rotacji + mały oddech sekwencyjny
+                    self._next_ready_at = now + rot_dur + self.seq_gap
+
+        self._active = [i for i in still if not i.get('rot_scheduled', False)]
         if before and not self._active:
             just_became_empty = True
-            self._next_ready_at = now + self.seq_gap   # mały oddech zanim ruszy kolejna
+            # jeśli nic nie ustawiło _next_ready_at (np. brak rotacji) – daj zwykły oddech
+            self._next_ready_at = max(self._next_ready_at, now + self.seq_gap)
 
-        # 2) SEKWENCYJNE spawnowanie następnych
-        #    - jeśli sekwencyjny: spawnuj następną TYLKO gdy nic nie jest aktywne i minął _next_ready_at
-        #    - jeśli nie: spawnuj według 'at' (stary równoległy tryb)
+        # 2) sekwencyjne spawnowanie następnych (dopiero gdy nic nie jest aktywne i minął _next_ready_at)
         if self.sequential:
             if not self._active and (self._spawned_idx + 1) < len(self.items):
                 nxt = self.items[self._spawned_idx + 1]
-                # opcjonalnie respektuj jego 'at' (możesz mieć wszystkie na 0.0)
                 if t >= max(nxt.at, 0.0) and now >= self._next_ready_at:
                     self._spawned_idx += 1
                     it = self.items[self._spawned_idx]
-                    # lokalna rotacja układu dla tej scenki
-                    if it.rotate_ring:
-                        order = ['TOP','RIGHT','BOTTOM','LEFT']
-                        syms = [self.ring_layout[p] for p in order]
-                        random.shuffle(syms)
-                        for p, s in zip(order, syms):
-                            self.ring_layout[p] = s
+                    # UWAGA: już NIE rotujemy tutaj – rotacja jest po zakończeniu poprzedniej scenki
                     self._active.append({'item': it, 'started': now, 'slide_start': None})
         else:
-            # tryb równoległy (stary): spawnuj wszystkie, których 'at' już minęło
+            # tryb równoległy – bez zmian, ale też bez rotacji przed spawnem
             while (self._spawned_idx + 1) < len(self.items) and self.items[self._spawned_idx + 1].at <= t:
                 self._spawned_idx += 1
                 it = self.items[self._spawned_idx]
-                if it.rotate_ring:
-                    order = ['TOP','RIGHT','BOTTOM','LEFT']
-                    syms = [self.ring_layout[p] for p in order]
-                    random.shuffle(syms)
-                    for p, s in zip(order, syms):
-                        self.ring_layout[p] = s
                 self._active.append({'item': it, 'started': now, 'slide_start': None})
 
-        # Uznajemy, że skończone, gdy wystartowały wszystkie scenki i żadna nie jest już aktywna
+        # 3) koniec tutorialu
         if (self._spawned_idx + 1) >= len(self.items) and not self._active:
             self._finished = True
 
@@ -635,15 +635,17 @@ class TutorialPlayer:
         g = self.g
         g._blit_bg()
 
-        # geometra
         base_size = int(g.w * SYMBOL_BASE_SIZE_FACTOR)
         cx, cy = int(g.w * 0.5), int(g.h * CENTER_Y_FACTOR)
 
-        # ring
-        g.ring.draw((cx, cy), base_size, layout=self.ring_layout)
+        # OBRÓT RINGU PODCZAS INSTRUKCJI
+        spin_deg = g._update_ring_rotation_anim()
+
+        # ring z aktualnym układem tutorialowym + obrotem
+        g.ring.draw((cx, cy), base_size, layout=self.ring_layout, spin_deg=spin_deg)
 
         # baner
-        self._draw_mapping_banner()
+        self._draw_mapping_banner() 
 
         # aktywne instancje
         for inst in self._active:
@@ -757,7 +759,6 @@ def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer'
 
 # ========= RULE MANAGER =========
 class RuleManager:
-    """Zarządza aktywnymi zasadami oraz aktualnym mappingiem A->B."""
     def __init__(self):
         self.active: dict[RuleType, RuleSpec] = {}
         self.current_mapping: Optional[Tuple[str, str]] = None
@@ -775,7 +776,6 @@ class RuleManager:
                 self.mapping_every_hits = int(s.periodic_every_hits or 0)
 
     def on_correct(self) -> bool:
-        """Zwraca True gdy trzeba odświeżyć mapping (co X trafień)."""
         if RuleType.MAPPING not in self.active or self.mapping_every_hits <= 0:
             return False
         self.hits_since_roll += 1
@@ -1072,30 +1072,31 @@ class InputRing:
             a += dash + gap
 
     # --- API ---
-    def draw(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
-        """Rysuje ring wraz z ikonami (o ile nie są ukryte przez memory)."""
+    def draw(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None, spin_deg: float = 0.0) -> None:
         g = self.g
         cx, cy = center
         r = int(base_size * RING_RADIUS_FACTOR)
 
         base, hi, soft = g.ring_colors()
 
-        # czas i prędkości obrotów – jak wcześniej, korzystamy z czasu gry
+        # czas dla obrotów warstw
         t = g.now() - getattr(g, "_ring_anim_start", g.now())
         base_cw  = 40 + 6 * (g.level - 1)
         base_ccw = 60 + 8 * (g.level - 1)
         rot_cw_deg  = -t * base_cw    # rotozoom: minus = CW
         rot_ccw_deg =  t * base_ccw
 
-        # płótna obrotowe
+        # płótno ringu
         margin = 36
         side = (r + margin) * 2
         C = side // 2
+        out = pygame.Surface((side, side), pygame.SRCALPHA)
+        def blit_to_out(surf): out.blit(surf, surf.get_rect(center=(C, C)))
 
         def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
-        def blit_center(surf): g.screen.blit(surf, surf.get_rect(center=(cx, cy)))
 
-        # L1 – fundament
+        # --- WARSTWY ---
+        # L1 — fundament
         l1a = new_layer()
         self._arc(l1a, C, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
         l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
@@ -1106,7 +1107,7 @@ class InputRing:
 
         layers = [l1a, l1b]
 
-        # L2 – od levelu 2
+        # L2 — od levelu 2
         if g.level >= 2:
             l2a = new_layer()
             self._ticks(l2a, C, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
@@ -1117,7 +1118,7 @@ class InputRing:
             l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
             layers += [l2a, l2b]
 
-        # L3 – scanner (akcent)
+        # L3 — scanner
         if g.level >= 3:
             l3 = new_layer()
             sweep = math.radians(42)
@@ -1128,7 +1129,7 @@ class InputRing:
                 pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
             layers.append(l3)
 
-        # L4 – orbitery
+        # L4 — orbitery
         if g.level >= 4:
             l4 = new_layer()
             orbit_r = int(r * 1.15)
@@ -1139,27 +1140,36 @@ class InputRing:
                 pygame.draw.circle(l4, (*base, 170), (x, y), 3)
             layers.append(l4)
 
-        # L5 – zewnętrzny dashed
+        # L5 — zewnętrzny dashed
         if g.level >= 5:
             l5 = new_layer()
             self._dashed_ring(l5, C, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
             l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
             layers.append(l5)
 
+        # --- ZŁÓŻ WARSTWY NA 'out' ---
         for L in layers:
-            blit_center(L)
+            blit_to_out(L)
 
-        # Ikony (pomijamy gdy memory ukrywa)
-        if g.level_cfg.memory_mode and not g.memory_show_icons:
-            return
+        # --- IKONY (jeśli nie schowane w memory) ---
+        if not (g.level_cfg.memory_mode and not g.memory_show_icons):
+            icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+            pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
+            active_layout = layout if layout is not None else g.ring_layout
+            for pos, (ix, iy) in pos_xy.items():
+                name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+                rect = pygame.Rect(0, 0, icon_size, icon_size)
+                # translacja do przestrzeni 'out'
+                ox = C + (ix - cx)
+                oy = C + (iy - cy)
+                rect.center = (ox, oy)
+                self.g.draw_symbol(out, name, rect)
 
-        icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
-        pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
-        active_layout = layout if layout is not None else g.ring_layout
-        for pos, (ix, iy) in pos_xy.items():
-            name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
-            rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
-            g.draw_symbol(g.screen, name, rect)
+        # --- GLOBALNY OBRÓT I BLIT NA EKRAN ---
+        if abs(spin_deg) > 0.0001:
+            out = pygame.transform.rotozoom(out, spin_deg, 1.0)
+
+        self.g.screen.blit(out, out.get_rect(center=(cx, cy)))
 
 # ========= TIMEBAR =========
 class TimeBar:
@@ -1296,6 +1306,18 @@ class Game:
         # ring
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
         self._ring_anim_start = self.now()
+
+        # --- ring rotation anim state ---
+        self.rot_anim = {
+            "active": False,
+            "t0": 0.0,
+            "dur": 0.8,          # czas animacji
+            "spins": 2.0,        # ile pełnych obrotów (2 = 720°)
+            "swap_at": 0.5,      # kiedy podmienić layout (ułamek czasu 0..1)
+            "swapped": False,
+            "from_layout": dict(self.ring_layout),
+            "to_layout": dict(self.ring_layout),
+}
         
         # memory (L5)
         self.memory_show_icons = True
@@ -1342,6 +1364,8 @@ class Game:
         # effects
         self.fx = EffectsManager(self.now, glitch_enabled=self.settings.get("glitch_enabled", True))
         self.exit_dir_pos: Optional[str] = None  # "TOP"|"RIGHT"|"LEFT"|"BOTTOM"
+        self.instruction_intro_t = 0.0
+        self.instruction_intro_dur = 0.0
 
         # music
         self.music_ok = False
@@ -1889,9 +1913,11 @@ class Game:
         self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
         self.tutorial = build_tutorial_for_level(self, lvl)
+        self.instruction_intro_t = self.now()
+        self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
         if self.level_cfg.rotations_per_level > 0:
-            self._rotate_ring_random()
+            self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
             self.did_start_rotation = True
 
         if self.level_cfg.memory_mode:
@@ -2076,7 +2102,7 @@ class Game:
 
             # rotacje w tym levelu
             if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
-                self._rotate_ring_random()
+                self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
             # po level_up() — jeśli przeszliśmy do INSTRUCTION, przerywamy
             if self.hits_in_level >= self.level_goal:
@@ -2750,122 +2776,54 @@ class Game:
         p1 = _pal(names[i]); p2 = _pal(names[i+1])
         return _lerp_pal(p1, p2, t)
 
-    # def _draw_input_ring_progressive(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None) -> None:
-    #     cx, cy = center
-    #     r = int(base_size * RING_RADIUS_FACTOR)
+    def _pick_new_ring_layout(self) -> dict[str,str]:
+        current = [self.ring_layout[p] for p in RING_POSITIONS]
+        symbols = list(SYMS)
+        while True:
+            random.shuffle(symbols)
+            if symbols != current:
+                break
+        return {pos: sym for pos, sym in zip(RING_POSITIONS, symbols)}
 
-    #     # kolory z wybranej palety
-    #     base, hi, soft = self.ring_colors()
+    def start_ring_rotation(self, *, dur: float = 0.8, spins: float = 2.0, swap_at: float = 0.5) -> None:
+        now = self.now()
+        self.rot_anim.update({
+            "active": True,
+            "t0": now,
+            "dur": float(max(0.15, dur)),
+            "spins": float(spins),
+            "swap_at": float(max(0.05, min(0.95, swap_at))),
+            "swapped": False,
+            "from_layout": dict(self.ring_layout),
+            "to_layout": self._pick_new_ring_layout(),
+        })
+        # pauza rozgrywki na czas animacji (bez glitcha)
+        self.pause_start = now
+        self.pause_until = now + self.rot_anim["dur"]
+        # ważne: NIE wywołujemy self.fx.trigger_glitch()
 
-    #     # czas i prędkości obrotów (deg/s) – delikatnie rosną z levelem
-    #     t = self.now() - self._ring_anim_start
-    #     base_cw  = 40 + 6 * (self.level - 1)     # clockwise
-    #     base_ccw = 60 + 8 * (self.level - 1)     # counter-clockwise
-    #     rot_cw_deg  = -t * base_cw               # rotozoom: minus = CW
-    #     rot_ccw_deg =  t * base_ccw
-
-    #     # lokalne płótna do obracania całych warstw
-    #     margin = 36
-    #     side = (r + margin) * 2
-    #     C = side // 2
-    #     def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
-    #     def blit_center(surf):
-    #         rect = surf.get_rect(center=(cx, cy))
-    #         self.screen.blit(surf, rect)
-
-    #     # helpers
-    #     def arc(surface, rad, frac, thick, color, *, start=0.0):
-    #         """Łuk o długości frac*2π (0..1)."""
-    #         frac = max(0.0, min(1.0, float(frac)))
-    #         rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-    #         a0 = float(start); a1 = a0 + 2*math.pi*frac
-    #         pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
-
-    #     def ticks(surface, rad, count, long_every=4, color=(255,255,255,120)):
-    #         for i in range(count):
-    #             ang = (i / count) * 2*math.pi
-    #             s, c = math.sin(ang), math.cos(ang)
-    #             r1 = rad + (8 if (i % long_every == 0) else 3)
-    #             r2 = rad - (12 if (i % long_every == 0) else 5)
-    #             x1, y1 = int(C + c*r1), int(C + s*r1)
-    #             x2, y2 = int(C + c*r2), int(C + s*r2)
-    #             pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
-
-    #     def dashed_ring(surface, rad, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
-    #         dash = math.radians(dash_deg); gap = math.radians(gap_deg)
-    #         rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-    #         a = 0.0
-    #         col = color or base
-    #         while a < 2*math.pi:
-    #             pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
-    #             a += dash + gap
-
-    #     # L1 – fundament
-    #     l1a = new_layer()
-    #     arc(l1a, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
-    #     l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
-
-    #     l1b = new_layer()
-    #     arc(l1b, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
-    #     l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
-
-    #     layers = [l1a, l1b]
-
-    #     # L2 – od levelu 2
-    #     if self.level >= 2:
-    #         l2a = new_layer()
-    #         ticks(l2a, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
-    #         l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
-
-    #         l2b = new_layer()
-    #         dashed_ring(l2b, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
-    #         l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
-    #         layers += [l2a, l2b]
-
-    #     # L3 – scanner (akcent)
-    #     if self.level >= 3:
-    #         l3 = new_layer()
-    #         sweep = math.radians(42)
-    #         start = t * 1.2
-    #         rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
-    #         pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)  
-    #         for w, a in ((12, 60), (20, 35)):
-    #             pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
-    #         layers.append(l3)
-
-    #     # === L4 (od levelu 4) – orbitery ===
-    #     if self.level >= 4:
-    #         l4 = new_layer()
-    #         orbit_r = int(r * 1.15)
-    #         for k in range(3):
-    #             ang = t * 1.4 + k * (2*math.pi/3)
-    #             x = int(C + math.cos(ang) * orbit_r)
-    #             y = int(C + math.sin(ang) * orbit_r)
-    #             pygame.draw.circle(l4, (*base, 170), (x, y), 3)
-    #         layers.append(l4)
-
-    #     # === L5 (od levelu 5) – zewnętrzny dashed ===
-    #     if self.level >= 5:
-    #         l5 = new_layer()
-    #         dashed_ring(l5, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
-    #         l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
-    #         layers.append(l5)
-
-    #     # złożenie
-    #     for L in layers: blit_center(L)
-
-    #     # --- Ikony na ringu (ukrywane w memory) ---
-    #     if self.level_cfg.memory_mode and not self.memory_show_icons:
-    #         return
-    #     icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
-    #     pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
-    #     active_layout = layout if layout is not None else self.ring_layout
-    #     for pos, (ix, iy) in pos_xy.items():
-    #         name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
-    #         rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
-    #         self.draw_symbol(self.screen, name, rect)
-    #         rect = pygame.Rect(0, 0, icon_size, icon_size); rect.center = (ix, iy)
-    #         self.draw_symbol(self.screen, name, rect)
+    def _update_ring_rotation_anim(self) -> float:
+        if not self.rot_anim["active"]:
+            return 0.0
+        now = self.now()
+        t = (now - self.rot_anim["t0"]) / self.rot_anim["dur"]
+        if t >= 1.0:
+            # finisz: zatwierdź docelowy layout i wyłącz animację
+            self.ring_layout = dict(self.rot_anim["to_layout"])
+            self._recompute_keymap()
+            self.rot_anim["active"] = False
+            self.rot_anim["swapped"] = True
+            return 0.0
+        # ease-out dla przyjemnego hamowania
+        p = self._ease_out_cubic(max(0.0, min(1.0, t)))
+        # w połowie obrotu podmień layout (żeby „wymieszać” w locie)
+        if (not self.rot_anim["swapped"]) and t >= self.rot_anim["swap_at"]:
+            self.ring_layout = dict(self.rot_anim["to_layout"])
+            self._recompute_keymap()
+            self.rot_anim["swapped"] = True
+        # kąt całkowity
+        deg = 360.0 * self.rot_anim["spins"] * p
+        return deg
 
     def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect) -> None:
         age = self.now() - self.symbol_spawn_time
@@ -2922,7 +2880,8 @@ class Game:
         base_rect.center = (int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR))
 
         # ring
-        self.ring.draw(base_rect.center, base_size, layout=self.ring_layout)
+        spin_deg = self._update_ring_rotation_anim()
+        self.ring.draw(base_rect.center, base_size, layout=self.ring_layout, spin_deg=spin_deg)
 
         # jeśli trwa/just-ended exit-slide, NIE rysujemy centralnego symbolu
         if self.exit_dir_pos:
@@ -3106,6 +3065,16 @@ class Game:
                 y = self.h - hh - pad
                 self.screen.blit(fnt.render(hint, True, (0, 0, 0)), (x + 2, y + 2))
                 self.screen.blit(fnt.render(hint, True, (220, 200, 120)), (x, y))
+
+                # --- FADE-IN na starcie instrukcji ---
+                t = (self.now() - getattr(self, "instruction_intro_t", 0.0)) / max(1e-6, getattr(self, "instruction_intro_dur", 0.0))
+                t = max(0.0, min(1.0, t))
+                alpha = int(255 * (1.0 - self._ease_out_cubic(t)))  # szybki start, miękkie zejście
+                if alpha > 0:
+                    overlay = pygame.Surface((self.w, self.h))
+                    overlay.set_alpha(alpha)
+                    overlay.fill((0, 0, 0))
+                    self.screen.blit(overlay, (0, 0))
 
         finally:
             self.screen = old_screen

@@ -14,9 +14,9 @@
     ]
   },
   "speedup": {
-    "target_time_initial": 7.09999999999999,
-    "target_time_min": 0.45,
-    "target_time_step": -0.03
+    "target_time_initial": 9.99999999999998,
+    "target_time_min": 0.30000000000000004,
+    "target_time_step": -0.09999999999999999
   },
   "timed": {
     "duration": 60.0,
@@ -30,7 +30,7 @@
   },
   "lives": 3,
   "audio": {
-    "music": "assets/music.ogg",
+    "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
     "music_volume": 0.30000000000000004,
     "sfx_volume": 0.2999999999999999
   },
@@ -48,7 +48,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 68,
+  "highscore": 124,
   "levels": {
     "1": {
       "hits": 15,
