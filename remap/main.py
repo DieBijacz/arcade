@@ -8,133 +8,16 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, Optional, Tuple, List, Callable
+from .config import CFG, save_config, load_config, persist_windowed_size
 
 import pygame
 
-# ========= CONFIG =========
-
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-
-DEFAULT_CFG = {
-    "pins": {"CIRCLE": 17, "CROSS": 27, "SQUARE": 22, "TRIANGLE": 23},
-    "display": {"fullscreen": True, "fps": 60, "windowed_size": [720, 1280]},
-    "speedup": {"target_time_initial": 3, "target_time_min": 0.45, "target_time_step": -0.03},
-    "timed": {"duration": 60.0, "rule_bonus": 5.0},
-    "rules": {"every_hits": 10, "banner_sec": 2.0, "banner_font_center": 64, "banner_font_pinned": 40},
-    "lives": 3,
-        "audio": {
-        "music": "assets/music.ogg",
-        "music_volume": 0.5, 
-        "sfx_volume": 0.8
-    },
-    "effects": {"glitch_enabled": True},
-    "ui": {"ring_palette": "auto"},
-    "images": {
-        "background": "assets/images/bg.png",
-        "symbol_circle": "assets/images/circle.png",
-        "symbol_cross": "assets/images/cross.png",
-        "symbol_square": "assets/images/square.png",
-        "symbol_triangle": "assets/images/triangle.png",
-        "arrow": "assets/images/arrow.png",
-    },
-    "highscore": 0,
-    "levels": {},
-}
-
-def _deepcopy(obj):
-    return json.loads(json.dumps(obj))
-
-def _merge(dst: dict, src: dict) -> dict:
-    """Shallow+recursive merge for dict trees (src overrides dst)."""
-    for k, v in src.items():
-        if isinstance(v, dict) and isinstance(dst.get(k), dict):
-            _merge(dst[k], v)
-        else:
-            dst[k] = v
-    return dst
-
-def _sanitize_cfg(cfg: dict) -> dict:
-    """Clamp user config into safe/expected ranges."""
-
-    s = cfg["speedup"]
-    s["target_time_initial"] = float(max(0.2, min(10.0, s["target_time_initial"])))
-    s["target_time_min"] = float(max(0.1, min(s["target_time_initial"], s["target_time_min"])))
-    s["target_time_step"] = float(max(-1.0, min(1.0, s["target_time_step"])))
-
-    a = cfg.setdefault("audio", {})
-    a["music_volume"] = float(max(0.0, min(1.0, a.get("music_volume", 0.5))))
-    a["sfx_volume"]   = float(max(0.0, min(1.0, a.get("sfx_volume",   0.8))))
-    
-    cfg["lives"] = int(max(0, min(9, cfg["lives"])))
-
-    if "fps" in cfg["display"]:
-        cfg["display"]["fps"] = int(max(30, min(240, cfg["display"]["fps"])))
-
-    # windowed size
-    ws = cfg["display"].get("windowed_size", [720, 1280])
-    if (
-        isinstance(ws, (list, tuple))
-        and len(ws) == 2
-        and all(isinstance(x, (int, float)) for x in ws)
-    ):
-        w, h = int(ws[0]), int(ws[1])
-        w = max(200, min(10000, w))
-        h = max(200, min(10000, h))
-        cfg["display"]["windowed_size"] = [w, h]
-    else:
-        cfg["display"]["windowed_size"] = [720, 1280]
-
-    # rules
-    r = cfg.setdefault("rules", {})
-    r["banner_font_center"] = int(max(8, min(200, r.get("banner_font_center", 64))))
-    r["banner_font_pinned"] = int(max(8, min(200, r.get("banner_font_pinned", 40))))
-    return cfg
-
-def save_config(partial_cfg: dict) -> None:
-    """Persist only the provided keys (merge semantics)."""
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            base = json.load(f)
-        if not isinstance(base, dict):
-            base = {}
-    except Exception:
-        base = {}
-    merged = _merge(base, partial_cfg)
-    try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-def load_config() -> dict:
-    cfg = _deepcopy(DEFAULT_CFG)
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            user = json.load(f)
-        _merge(cfg, user)
-    except FileNotFoundError:
-        save_config(cfg)
-    except Exception:
-        pass
-    return _sanitize_cfg(cfg)
-
-
-CFG = load_config()
-
-def _persist_windowed_size(width: int, height: int) -> None:
-    """Store last windowed size back to config for next run."""
-    try:
-        CFG.setdefault("display", {})
-        CFG["display"]["windowed_size"] = [int(width), int(height)]
-        save_config({"display": {"windowed_size": CFG["display"]["windowed_size"]}})
-    except Exception:
-        pass
+from pathlib import Path
+PKG_DIR = Path(__file__).resolve().parent
 
 # ========= IMAGE LOADER (cache) =========
 
 class ImageStore:
-    """Tiny image cache so we don't reload the same texture repeatedly."""
-
     def __init__(self) -> None:
         self.cache: dict[str, pygame.Surface] = {}
 
@@ -426,7 +309,7 @@ SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)                # offset cienia
 SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                 # minimalny „dodatkowy” wzrost wysokości
 
 # Typography (rozmiary bazowe; w kodzie są skalowane do okna)
-FONT_PATH = "assets/font/Orbitron-VariableFont_wght.ttf"
+FONT_PATH = str(PKG_DIR / "assets" / "font" / "Orbitron-VariableFont_wght.ttf")
 FONT_SIZE_SMALL = 18
 FONT_SIZE_MID = 24
 FONT_SIZE_BIG = 60
@@ -1527,7 +1410,7 @@ class Game:
             w, h = self._snap_to_aspect(w, h)
             self.screen = pygame.display.set_mode((w, h), WINDOWED_FLAGS)
             self.last_windowed_size = self.screen.get_size()
-            _persist_windowed_size(*self.last_windowed_size)
+            persist_windowed_size(*self.last_windowed_size)
 
         self.last_window_size = self.screen.get_size()
         self._recompute_layout()
@@ -1560,7 +1443,7 @@ class Game:
                 CFG.get("display", {}).get("windowed_size", WINDOWED_DEFAULT_SIZE)
             )
             self.screen = pygame.display.set_mode((w, h), WINDOWED_FLAGS)
-            _persist_windowed_size(*self.screen.get_size())
+            persist_windowed_size(*self.screen.get_size())
         self.last_window_size = self.screen.get_size()
         self._recompute_layout()
 
@@ -1570,7 +1453,7 @@ class Game:
         width, height = self._snap_to_aspect(width, height)
         self.screen = pygame.display.set_mode((width, height), WINDOWED_FLAGS)
         self.last_window_size = (width, height)
-        _persist_windowed_size(width, height)
+        persist_windowed_size(width, height)
         self._recompute_layout()
 
 

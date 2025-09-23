@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run remap.main (module)",
+      "type": "python",
+      "request": "launch",
+      "module": "remap.main",
+      "cwd": "${workspaceFolder}/ARCADE",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run main.py (script)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/ARCADE/remap/main.py",
+      "cwd": "${workspaceFolder}/ARCADE",
+      "console": "integratedTerminal"
+    }
+  ]
+}
