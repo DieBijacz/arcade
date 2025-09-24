@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json
+
 import math
 import os
 import random
@@ -7,12 +7,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, Optional, Tuple, List, Callable
-from .config import CFG, save_config, load_config, persist_windowed_size
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import pygame
 
-from pathlib import Path
+from .config import CFG, save_config, persist_windowed_size
 PKG_DIR = Path(__file__).resolve().parent
 
 # ========= IMAGE LOADER (cache) =========
@@ -49,7 +49,6 @@ try:
 except Exception:
     GPIO_AVAILABLE = False
 
-
 @dataclass
 class Pins:
     CIRCLE: int
@@ -57,13 +56,9 @@ class Pins:
     SQUARE: int
     TRIANGLE: int
 
-
 PINS = Pins(**CFG["pins"])  # typed view over pin integers
 
-
 class InputQueue:
-    """Simple FIFO for button/keyboard symbol inputs."""
-
     def __init__(self) -> None:
         self._q: list[str] = []
 
@@ -252,6 +247,29 @@ MENU_TITLE_Y_FACTOR = 0.28           # pionowe położenie tytułu w MENU (propo
 MENU_MODE_GAP = 20                   # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
 MENU_HINT_GAP = 48                   # odstęp do pierwszej podpowiedzi
 MENU_HINT2_EXTRA_GAP = 12            # dodatkowy odstęp do drugiej podpowiedzi
+
+# --- Menu: styl tytułu REMAP ---
+MENU_TITLE_GLOBAL_SCALE = 1.18
+MENU_TITLE_PRIMARY_COLOR = INK                 # kolor liter
+MENU_TITLE_NEON_COLOR = (90, 200, 255, 75)     # delikatna poświata za tytułem
+MENU_TITLE_NEON_LAYERS = 4                     # ile „rozmytych” warstw poświaty
+MENU_TITLE_NEON_SCALE_STEP = 0.08              # jak szeroko rośnie każda warstwa poświaty
+MENU_SUBTLE_TEXT_COLOR = (210, 210, 220)       # kolor tekstów pomocniczych
+MENU_CHIP_BG = (20, 22, 30, 160)               # tło żetonu „chip”
+MENU_CHIP_BORDER = (120, 200, 255, 200)
+MENU_CHIP_RADIUS = 14
+MENU_TITLE_TRIANGLE_COLOR = (120, 210, 255)      # delikatny cyjan
+MENU_TITLE_GLOW_COLOR = (120, 210, 255, 60)      # poświata za tytułem
+MENU_TITLE_GLOW_PASSES = 2                       # ile powiększonych „kopii” do poświaty
+MENU_TITLE_GLOW_SCALE = 1.12                     # skala poświaty (1.0 = brak)
+MENU_TITLE_TRIANGLE_SCALE = 0.82                 # wielkość trójkąta względem wysokości linii
+MENU_TITLE_LETTER_SPACING = 0.012                # tracking pomiędzy segmentami
+
+MENU_MODE_BADGE_BG = (22, 26, 34, 120)          # tło małego badge pod tytułem
+MENU_MODE_BADGE_BORDER = (120, 200, 255, 110)    # cienka ramka
+MENU_MODE_BADGE_RADIUS = 10
+MENU_MODE_TEXT_COLOR = (225, 230, 240)           # subtelny tekst
+
 OVER_TITLE_OFFSET_Y = -60            # przesunięcie tytułu „GAME OVER”
 OVER_SCORE_GAP1 = -10                # przesunięcie pierwszej linii wyniku
 OVER_SCORE_GAP2 = 26                 # przesunięcie drugiej linii wyniku
@@ -322,23 +340,11 @@ def init_gpio(iq: InputQueue):
         btn.when_pressed = (lambda n=name: iq.push(n))
     return buttons
 
-
 # ========= ENUMS =========
-
-class Symbol(Enum):
-    TRIANGLE = auto()
-    CIRCLE = auto()
-    SQUARE = auto()
-    CROSS = auto()
-
-
-SYMS = [s.name for s in Symbol]
-
 
 class Mode(Enum):
     SPEEDUP = auto()
     TIMED = auto()
-
 
 class Scene(Enum):
     MENU = auto()
@@ -350,22 +356,11 @@ class Scene(Enum):
 class RuleType(Enum):
     MAPPING = auto()   # „A ⇒ B” (baner NEW RULE)
 
-class InputRouter:
-    def __init__(self):
-        self.keys_down=set(); self.lock=False; self.accept_after=0.0
-        self.key_to_pos={...}
-        self.layout = dict(DEFAULT_RING_LAYOUT)
-
-    def recompute(self): ...
-    def keydown(self, key, now)->Optional[str]: ...
-    def keyup(self, key, now)->None: ...
-
 @dataclass
 class RuleSpec:
     type: RuleType
     banner_on_level_start: bool = False
     periodic_every_hits: int = 0  
-
 
 @dataclass
 class LevelCfg:
@@ -1037,6 +1032,62 @@ class EffectsManager:
         self.exit_symbol = None
         self.exit_start = 0.0
 
+# ========= SYMBOL MODEL =========
+@dataclass(frozen=True)
+class Symbol:
+    name: str
+    color: Tuple[int, int, int]
+    image_cfg_key: str  # klucz w CFG["images"], np. "symbol_circle"
+
+    def draw(self, surface: pygame.Surface, rect: pygame.Rect, *, images: ImageStore, cfg: dict) -> None:
+        # spróbuj wczytać PNG z configu, a potem fallback wektorowy
+        path = cfg.get("images", {}).get(self.image_cfg_key)
+        img = images.load(path) if path else None
+        if img:
+            iw, ih = img.get_size()
+            scale = min(rect.width / iw, rect.height / ih)
+            new_size = (int(iw * scale), int(ih * scale))
+            scaled = pygame.transform.smoothscale(img, new_size)
+            r = scaled.get_rect(center=rect.center)
+            surface.blit(scaled, r)
+            return
+
+        # ---- fallback: rysunek wektorowy spójny z dotychczasowym ----
+        color = self.color
+        thickness = SYMBOL_DRAW_THICKNESS
+        cx, cy = rect.center
+        w, h = rect.size
+        r = min(w, h) * SYMBOL_CIRCLE_RADIUS_FACTOR
+
+        if self.name == "CIRCLE":
+            pygame.draw.circle(surface, color, (int(cx), int(cy)), int(r), thickness)
+
+        elif self.name == "SQUARE":
+            side = r * 1.6
+            rr = pygame.Rect(0, 0, side, side)
+            rr.center = rect.center
+            pygame.draw.rect(surface, color, rr, thickness, border_radius=SYMBOL_SQUARE_RADIUS)
+
+        elif self.name == "TRIANGLE":
+            a = (cx, cy - r)
+            b = (cx - r * SYMBOL_TRIANGLE_POINT_FACTOR, cy + r * SYMBOL_TRIANGLE_POINT_FACTOR)
+            c = (cx + r * SYMBOL_TRIANGLE_POINT_FACTOR, cy + r * SYMBOL_TRIANGLE_POINT_FACTOR)
+            pygame.draw.polygon(surface, color, [a, b, c], thickness)
+
+        elif self.name == "CROSS":
+            k = r * SYMBOL_CROSS_K_FACTOR
+            pygame.draw.line(surface, color, (cx - k, cy - k), (cx + k, cy + k), thickness)
+            pygame.draw.line(surface, color, (cx - k, cy + k), (cx + k, cy - k), thickness)
+
+SYMBOLS: Dict[str, Symbol] = {
+    "TRIANGLE": Symbol("TRIANGLE", SYMBOL_COLORS["TRIANGLE"], "symbol_triangle"),
+    "CIRCLE":   Symbol("CIRCLE",   SYMBOL_COLORS["CIRCLE"],   "symbol_circle"),
+    "SQUARE":   Symbol("SQUARE",   SYMBOL_COLORS["SQUARE"],   "symbol_square"),
+    "CROSS":    Symbol("CROSS",    SYMBOL_COLORS["CROSS"],    "symbol_cross"),
+}
+
+SYMS: List[str] = list(SYMBOLS.keys())
+
 # ========= RING =========
 class InputRing:
     def __init__(self, game: 'Game'):
@@ -1227,7 +1278,6 @@ class Game:
 
     # ---- Inicjalizacja i podstawy cyklu życia ----
 
-
     def __init__(self, screen: pygame.Surface, mode: Mode = Mode.SPEEDUP):
         self.screen = screen
         self.cfg = CFG
@@ -1402,9 +1452,7 @@ class Game:
         if self.music_ok:
             pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
 
-
     # ---- Czas i proste utilsy ----
-
 
     def now(self) -> float:
         return time.time()
@@ -1431,9 +1479,7 @@ class Game:
     def lives_enabled(self) -> bool:
         return int(self.settings.get("lives", MAX_LIVES)) > 0
 
-
 # ---- Zasoby, layout, UI scale, fonty, tło ----
-
 
     def _ensure_framebuffer(self) -> None:
         self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
@@ -1544,9 +1590,7 @@ class Game:
         except Exception:
             self.music_ok = False
 
-
 # ---- Okno/tryb wyświetlania & rozmiar ----
-
 
     def _set_display_mode(self, fullscreen: bool) -> None:
         if fullscreen:
@@ -1604,16 +1648,12 @@ class Game:
         persist_windowed_size(width, height)
         self._recompute_layout()
 
-
 # ---- Klawisze i mapowania wejść ----
-
 
     def _recompute_keymap(self) -> None:
         self.keymap_current = {k: self.ring_layout[pos] for k, pos in self.key_to_pos.items()}
 
-
 # ---- Ustawienia ----
-
 
     def settings_items(self):
         items = [
@@ -1870,9 +1910,7 @@ class Game:
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
-
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
-
 
     def reset_game_state(self) -> None:
         self.level = 1
@@ -1995,9 +2033,7 @@ class Game:
         # 3) Nowy target na start rozgrywki
         self.new_target()
 
-
 # ---- Pętla gry i wejścia (flow rozgrywki) ----
-
 
     def handle_event(self, event: pygame.event.Event, iq: InputQueue):
         if event.type == pygame.VIDEORESIZE:
@@ -2266,9 +2302,7 @@ class Game:
         for n in iq.pop_all():
             self.handle_input_symbol(n)
 
-
 # ---- Rysowanie ----
-
 
     def _draw_round_rect(
         self,
@@ -2330,6 +2364,143 @@ class Game:
         self.screen.blit(chip, (x, y))
         return pygame.Rect(x, y, w, h)
 
+    def _soft_glow(self, base: pygame.Surface, color=(120,210,255,60), scale=1.12, passes=2) -> pygame.Surface:
+        bw, bh = base.get_size()
+        glow_w = int(bw * scale)
+        glow_h = int(bh * scale)
+        out = pygame.Surface((glow_w, glow_h), pygame.SRCALPHA)
+        # skopiuj i powiększ bazę kilka razy z lekkim przesunięciem
+        for i in range(passes):
+            k = 1.0 + (scale - 1.0) * (i + 1) / passes
+            sw = max(1, int(bw * k))
+            sh = max(1, int(bh * k))
+            s = pygame.transform.smoothscale(base, (sw, sh))
+            # zabarw na kolor poświaty
+            tint = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            tint.fill(color)
+            s.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            dx = (glow_w - sw) // 2
+            dy = (glow_h - sh) // 2
+            out.blit(s, (dx, dy), special_flags=pygame.BLEND_PREMULTIPLIED)
+        return out
+
+    def _render_title_remap_minimal(self) -> pygame.Surface:
+        # REM + △ + P  (REMAP)
+        left_surf  = self.big.render("REM", True, MENU_TITLE_PRIMARY_COLOR)
+        right_surf = self.big.render("P",   True, MENU_TITLE_PRIMARY_COLOR)
+
+        H = max(left_surf.get_height(), right_surf.get_height())
+
+        # stały rozmiar trójkąta (ZERO skalowania geometrii)
+        tri_h = int(H * MENU_TITLE_TRIANGLE_SCALE)
+        tri_w = int(tri_h * 0.9)
+        thickness = max(2, int(SYMBOL_DRAW_THICKNESS * (H / self.big.get_height())))
+
+        # stały tracking
+        gap = int(self.w * MENU_TITLE_LETTER_SPACING)
+
+        total_w = left_surf.get_width() + gap + tri_w + gap + right_surf.get_width()
+        total_h = H
+        title = pygame.Surface((total_w, total_h), pygame.SRCALPHA)
+
+        x = 0
+        # LEWA część (REM)
+        title.blit(self._shadow_text(left_surf), (x + 2, 2))
+        title.blit(left_surf, (x, 0))
+        x += left_surf.get_width() + gap
+
+        # TRÓJKĄT jako 'A' — osadzony na baseline, bez skalowania
+        tri_rect = pygame.Rect(0, 0, tri_w, tri_h)
+        tri_rect.midbottom = (x + tri_w // 2, total_h)
+        a = (tri_rect.centerx, tri_rect.top)
+        b = (tri_rect.left, tri_rect.bottom)
+        c = (tri_rect.right, tri_rect.bottom)
+        pygame.draw.polygon(title, MENU_TITLE_TRIANGLE_COLOR, [a, b, c], thickness)
+        x += tri_w + gap
+
+        # PRAWA część (P)
+        title.blit(self._shadow_text(right_surf), (x + 2, 2))
+        title.blit(right_surf, (x, 0))
+
+        # „oddech” tylko w poświacie – zmieniamy alfa, nie rozmiar
+        t = self.now()
+        # 0.5 ↔ 1.0 intensywności
+        glow_alpha = int(60 + 40 * (0.5 + 0.5 * math.sin(t * 1.0)))
+        glow_color = (MENU_TITLE_GLOW_COLOR[0], MENU_TITLE_GLOW_COLOR[1],
+                    MENU_TITLE_GLOW_COLOR[2], glow_alpha)
+
+        glow = self._soft_glow(title, glow_color, MENU_TITLE_GLOW_SCALE, MENU_TITLE_GLOW_PASSES)
+        out = pygame.Surface(glow.get_size(), pygame.SRCALPHA)
+        ox = (glow.get_width()  - title.get_width())  // 2
+        oy = (glow.get_height() - title.get_height()) // 2
+        out.blit(glow, (0, 0))
+        out.blit(title, (ox, oy))
+        return out
+
+    def _draw_neon_pill(self, rect: pygame.Rect, color=(90,200,255,75), layers: int = 4, scale_step: float = 0.08):
+        cx, cy = rect.center
+        w, h = rect.size
+        for i in range(layers, 0, -1):
+            k = 1.0 + i * scale_step
+            rw = int(w * k)
+            rh = int(h * k)
+            alpha = max(10, int(color[3] * (i / layers)))
+            surf = pygame.Surface((rw, rh), pygame.SRCALPHA)
+            pygame.draw.rect(surf, (color[0], color[1], color[2], alpha), surf.get_rect(), border_radius=max(8, int(rh*0.45)))
+            self.screen.blit(surf, (cx - rw//2, cy - rh//2), special_flags=pygame.BLEND_PREMULTIPLIED)
+
+    def _draw_title_remap(self, y: int) -> pygame.Rect:
+        title = "REMAP"
+        # pomiar bazowy – cały napis w jednej sztuce, żeby dobrać wysokość
+        base_surf = self.big.render(title, True, MENU_TITLE_PRIMARY_COLOR)
+        base_w, base_h = base_surf.get_size()
+
+        # rozbijamy na 'RE' + 'MP', a w miejscu 'A' wstawimy trójkąt
+        left_text = "RE"
+        right_text = "MP"
+        left_surf  = self.big.render(left_text, True, MENU_TITLE_PRIMARY_COLOR)
+        right_surf = self.big.render(right_text, True, MENU_TITLE_PRIMARY_COLOR)
+        lh = left_surf.get_height()
+        rh = right_surf.get_height()
+        H = max(lh, rh)  # docelowa „wysokość linii”
+
+        # szerokość „A” szacujemy z szerokości całego wyrazu – to da naturalny kerning
+        # (prosto: przyjmijmy, że 'A' to 0.8 wysokości kwadrat na trójkąt)
+        tri_h = int(H * MENU_TITLE_TRIANGLE_SCALE)
+        tri_w = int(tri_h * 0.9)
+
+        # tracking – odrobina powietrza pomiędzy segmentami
+        gap = int(self.w * MENU_TITLE_LETTER_SPACING)
+
+        total_w = left_surf.get_width() + gap + tri_w + gap + right_surf.get_width()
+        x = (self.w - total_w) // 2
+
+        # NEON: delikatny „świetlik” za wszystkimi elementami
+        neon_rect = pygame.Rect(x - self.px(10), y - self.px(6), total_w + self.px(20), H + self.px(12))
+        self._draw_neon_pill(neon_rect, MENU_TITLE_NEON_COLOR, MENU_TITLE_NEON_LAYERS, MENU_TITLE_NEON_SCALE_STEP)
+
+        # LEWA część
+        self.screen.blit(self._shadow_text(left_surf), (x + 2, y + 2))
+        self.screen.blit(left_surf, (x, y))
+        x += left_surf.get_width() + gap
+
+        # TRÓJKĄT zamiast „A”
+        tri_rect = pygame.Rect(0, 0, tri_w, tri_h)
+        tri_rect.midbottom = (x + tri_w//2, y + H)  # osadź „na baseline”
+        # rysunek wektorowy (spójny z symbolami)
+        thickness = max(2, int(SYMBOL_DRAW_THICKNESS * (H / self.big.get_height())))
+        a = (tri_rect.centerx, tri_rect.top)
+        b = (tri_rect.left, tri_rect.bottom)
+        c = (tri_rect.right, tri_rect.bottom)
+        pygame.draw.polygon(self.screen, MENU_TITLE_TRIANGLE_COLOR, [a, b, c], thickness)
+        x += tri_w + gap
+
+        # PRAWA część
+        self.screen.blit(self._shadow_text(right_surf), (x + 2, y + 2))
+        self.screen.blit(right_surf, (x, y))
+
+        return pygame.Rect(neon_rect)
+
     def draw_arrow(self, surface: pygame.Surface, rect: pygame.Rect, color=RULE_ARROW_COLOR, width=RULE_ARROW_W) -> None:
         path = self.cfg.get("images", {}).get("arrow")
         img = self.images.load(path) if path else None
@@ -2352,40 +2523,14 @@ class Game:
         p2 = (ax2 - head_w, ay - half_h)
         p3 = (ax2 - head_w, ay + half_h)
         pygame.draw.polygon(surface, color, (p1, p2, p3), width)
-
+    
     def draw_symbol(self, surface: pygame.Surface, name: str, rect: pygame.Rect) -> None:
-        path = self.cfg["images"].get(f"symbol_{name.lower()}")
-        img = self.images.load(path)
-        if not img:
-            # vector fallback
-            color = SYMBOL_COLORS.get(name, INK)
-            thickness = SYMBOL_DRAW_THICKNESS
-            cx, cy = rect.center
-            w, h = rect.size
-            r = min(w, h) * SYMBOL_CIRCLE_RADIUS_FACTOR
-            if name == "CIRCLE":
-                pygame.draw.circle(surface, color, (int(cx), int(cy)), int(r), thickness)
-            elif name == "SQUARE":
-                side = r * 1.6
-                rr = pygame.Rect(0, 0, side, side)
-                rr.center = rect.center
-                pygame.draw.rect(surface, color, rr, thickness, border_radius=SYMBOL_SQUARE_RADIUS)
-            elif name == "TRIANGLE":
-                a = (cx, cy - r)
-                b = (cx - r * SYMBOL_TRIANGLE_POINT_FACTOR, cy + r * SYMBOL_TRIANGLE_POINT_FACTOR)
-                c = (cx + r * SYMBOL_TRIANGLE_POINT_FACTOR, cy + r * SYMBOL_TRIANGLE_POINT_FACTOR)
-                pygame.draw.polygon(surface, color, [a, b, c], thickness)
-            elif name == "CROSS":
-                k = r * SYMBOL_CROSS_K_FACTOR
-                pygame.draw.line(surface, color, (cx - k, cy - k), (cx + k, cy + k), thickness)
-                pygame.draw.line(surface, color, (cx - k, cy + k), (cx + k, cy - k), thickness)
-        else:
-            img_w, img_h = img.get_size()
-            scale = min(rect.width / img_w, rect.height / img_h)
-            new_size = (int(img_w * scale), int(img_h * scale))
-            scaled_img = pygame.transform.smoothscale(img, new_size)
-            img_rect = scaled_img.get_rect(center=rect.center)
-            surface.blit(scaled_img, img_rect)
+        sym = SYMBOLS.get(name)
+        if not sym:
+            # awaryjnie — okrąg w kolorze INK
+            pygame.draw.circle(surface, INK, rect.center, int(min(rect.w, rect.h)*0.3), max(1, SYMBOL_DRAW_THICKNESS))
+            return
+        sym.draw(surface, rect, images=self.images, cfg=self.cfg)
 
     def _draw_label_value_vstack(self, *, label: str, value: str, left: bool, anchor_rect: pygame.Rect) -> None:
         label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
@@ -2939,28 +3084,56 @@ class Game:
                 self._draw_gameplay()
 
             elif self.scene is Scene.MENU:
+                # tło
                 self._blit_bg()
-                title_text = "Remap"
-                tw, th = self.big.size(title_text)
-                tx = self.w / 2 - tw / 2
-                ty = self.h * MENU_TITLE_Y_FACTOR
-                mode_gap  = self.px(MENU_MODE_GAP)
-                hint_gap  = self.px(MENU_HINT_GAP)
-                hint2_gap = self.px(MENU_HINT2_EXTRA_GAP)
-                self.draw_text(self.big, title_text, (tx, ty))
 
+                # Tytuł
+                title_surf = self._render_title_remap_minimal()
+                tw, th = title_surf.get_size()
+                sw = max(1, int(tw * MENU_TITLE_GLOBAL_SCALE))
+                sh = max(1, int(th * MENU_TITLE_GLOBAL_SCALE))
+                title_surf = pygame.transform.smoothscale(title_surf, (sw, sh))
+                tw, th = title_surf.get_size()
+
+                ty = int(self.h * MENU_TITLE_Y_FACTOR)      # bez boba
+                tx = (self.w - tw) // 2
+                self.screen.blit(title_surf, (tx, ty))
+
+                # cienka neonowa belka pod tytułem (stała szerokość; chcemy stabilność)
+                bar_margin = self.px(10)
+                bar_h = self.px(6)
+                bar_w = int(tw * 0.82)
+                bx = (self.w - bar_w) // 2
+                by = ty + th + bar_margin
+
+                bar = pygame.Surface((bar_w, bar_h), pygame.SRCALPHA)
+                bar.fill((120, 210, 255, 90))
+                glow = pygame.transform.smoothscale(bar, (int(bar_w * 1.2), int(bar_h * 2.4)))
+                grect = glow.get_rect(center=(bx + bar_w // 2, by + bar_h // 2))
+                self.screen.blit(glow, grect.topleft)
+                self.screen.blit(bar, (bx, by))
+
+                # Badge trybu
                 mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
-                mode_text = f"Mode: {mode_label}  (M = change)"
-                mw, mh = self.mid.size(mode_text)
-                self.draw_text(self.mid, mode_text, (self.w/2 - mw/2,  ty + th + mode_gap), color=ACCENT)
+                mode_text = f"Mode: {mode_label}   (M to change)"
+                t_surf = self.mid.render(mode_text, True, MENU_MODE_TEXT_COLOR)
+                pad_x = self.px(12); pad_y = self.px(8)
+                bw = t_surf.get_width() + pad_x * 2
+                bh = t_surf.get_height() + pad_y * 2
+                bx = (self.w - bw) // 2
+                by = by + bar_h + self.px(14)
 
-                hint_text = "ENTER = start   ·   ESC/Q = quit"
-                hw, hh = self.font.size(hint_text)
-                self.draw_text(self.font, hint_text, (self.w/2 - hw/2,  ty + th + hint_gap + mh))
+                badge_rect = pygame.Rect(bx, by, bw, bh)
+                pygame.draw.rect(self.screen, MENU_MODE_BADGE_BG, badge_rect, border_radius=MENU_MODE_BADGE_RADIUS)
+                pygame.draw.rect(self.screen, MENU_MODE_BADGE_BORDER, badge_rect, width=1, border_radius=MENU_MODE_BADGE_RADIUS)
+                self.screen.blit(t_surf, (bx + pad_x, by + pad_y))
 
-                hint2_text = "O = settings"
-                h2w, h2h = self.font.size(hint2_text)
-                self.draw_text(self.font, hint2_text,(self.w/2 - h2w/2, ty + th + hint_gap + mh + hh + hint2_gap))
+                # Hint na dole
+                hint = "ENTER = start    ·    O = settings    ·    ESC = quit"
+                hf = self.font
+                hw, hh = hf.size(hint)
+                bottom_gap = self.px(24)
+                self.draw_text(hf, hint, (self.w/2 - hw/2, self.h - bottom_gap - hh//4), color=(210, 220, 235))
 
             elif self.scene is Scene.OVER:
                 over_title_off = self.px(OVER_TITLE_OFFSET_Y)
@@ -3084,9 +3257,7 @@ class Game:
         self.screen.blit(final_surface, (0, 0))
         pygame.display.flip()
 
-
 # ============================== MAIN LOOP ============================== #
-
 
 def main():
     os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"
