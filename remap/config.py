@@ -31,6 +31,7 @@ DEFAULT_CFG: Dict[str, Any] = {
         "symbol_square": "assets/images/square.png",
         "symbol_triangle": "assets/images/triangle.png",
         "arrow": "assets/images/arrow.png",
+        "ring": "assets/images/ring.png",
     },
     "highscore": 0,
     "levels": {},

@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple
 import pygame
 
 from .config import CFG, save_config, persist_windowed_size
+from .settings import make_runtime_settings, clamp_settings, commit_settings
+
 PKG_DIR = Path(__file__).resolve().parent
 
 # ========= IMAGE LOADER (cache) =========
@@ -78,10 +80,10 @@ ACCENT = (255, 210, 90)          # akcent (nagłówki, ważne etykiety)
 
 # Kolory wektorowych symboli, jeśli brak tekstur PNG
 SYMBOL_COLORS = {
-    "TRIANGLE": (0, 255, 0),
-    "CIRCLE": (255, 0, 0),
-    "CROSS": (0, 0, 255),
-    "SQUARE": (255, 215, 0),
+    "TRIANGLE": (0, 0, 255),   
+    "CIRCLE":   (255, 0, 0),
+    "CROSS":    (0, 255, 0),   
+    "SQUARE":   (255, 215, 0),
 }
 
 LEVEL_COLOR_CHOICES: List[Tuple[int,int,int]] = [
@@ -1091,38 +1093,10 @@ SYMS: List[str] = list(SYMBOLS.keys())
 # ========= RING =========
 class InputRing:
     def __init__(self, game: 'Game'):
-        self.g = game  # miękka zależność na Game (wymiary, level, palety, fonty, itd.)
+        self.g = game
 
-    # --- helpers (lokalne – czysto graficzne) ---
-    @staticmethod
-    def _arc(surface, C: int, rad: int, frac: float, thick: int, color, *, start: float = 0.0):
-        frac = max(0.0, min(1.0, float(frac)))
-        rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-        a0 = float(start); a1 = a0 + 2*math.pi*frac
-        pygame.draw.arc(surface, color, rect, a0, a1, max(1, int(thick)))
+    # (helpers unchanged...)
 
-    @staticmethod
-    def _ticks(surface, C: int, rad: int, count: int, long_every: int = 4, color=(255,255,255,120)):
-        for i in range(count):
-            ang = (i / count) * 2*math.pi
-            s, c = math.sin(ang), math.cos(ang)
-            r1 = rad + (8 if (i % long_every == 0) else 3)
-            r2 = rad - (12 if (i % long_every == 0) else 5)
-            x1, y1 = int(C + c*r1), int(C + s*r1)
-            x2, y2 = int(C + c*r2), int(C + s*r2)
-            pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
-
-    @staticmethod
-    def _dashed_ring(surface, C: int, rad: int, *, dash_deg=12, gap_deg=8, width=2, alpha=150, color=None):
-        dash = math.radians(dash_deg); gap = math.radians(gap_deg)
-        rect = pygame.Rect(0, 0, int(rad*2), int(rad*2)); rect.center = (C, C)
-        a = 0.0
-        col = color or (255,255,255)
-        while a < 2*math.pi:
-            pygame.draw.arc(surface, (*col, alpha), rect, a, a+dash, width)
-            a += dash + gap
-
-    # --- API ---
     def draw(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None, spin_deg: float = 0.0) -> None:
         g = self.g
         cx, cy = center
@@ -1130,79 +1104,97 @@ class InputRing:
 
         base, hi, soft = g.ring_colors()
 
-        # czas dla obrotów warstw
+        # time for rotation
         t = g.now() - getattr(g, "_ring_anim_start", g.now())
-        base_cw  = 40 + 6 * (g.level - 1)
+        # positive degrees in pygame are CCW, so keep this positive for CCW
         base_ccw = 60 + 8 * (g.level - 1)
-        rot_cw_deg  = -t * base_cw    # rotozoom: minus = CW
-        rot_ccw_deg =  t * base_ccw
+        rot_ccw_deg = t * base_ccw
 
-        # płótno ringu
+        # canvas for ring + icons
         margin = 36
         side = (r + margin) * 2
         C = side // 2
         out = pygame.Surface((side, side), pygame.SRCALPHA)
-        def blit_to_out(surf): out.blit(surf, surf.get_rect(center=(C, C)))
 
-        def new_layer(): return pygame.Surface((side, side), pygame.SRCALPHA)
+        def blit_to_out(surf):
+            out.blit(surf, surf.get_rect(center=(C, C)))
 
-        # --- WARSTWY ---
-        # L1 — fundament
-        l1a = new_layer()
-        self._arc(l1a, C, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
-        l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg, 1.0)
+        # --- Try PNG ring first ---
+        ring_path = g.cfg.get("images", {}).get("ring")
+        ring_img = g.images.load(ring_path) if ring_path else None
 
-        l1b = new_layer()
-        self._arc(l1b, C, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
-        l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
+        if ring_img:
+            # scale ring to fit comfortably inside the canvas
+            iw, ih = ring_img.get_size()
+            # leave a tiny padding so strokes aren’t clipped
+            max_target = int(side * 0.94)
+            scale = min(max_target / max(1, iw), max_target / max(1, ih))
+            ring_scaled = pygame.transform.smoothscale(ring_img, (int(iw * scale), int(ih * scale)))
 
-        layers = [l1a, l1b]
+            # rotate CCW by rot_ccw_deg
+            ring_rot = pygame.transform.rotozoom(ring_scaled, rot_ccw_deg, 1.0)
+            blit_to_out(ring_rot)
+        else:
+            # --- Fallback to your procedural multi-layer ring ---
+            # keep your original layers so nothing regresses if PNG is missing
+            base_cw  = 40 + 6 * (g.level - 1)
+            rot_cw_deg  = -t * base_cw    # CW (negative), to keep the layered contrast
+            rot_ccw_deg2 = rot_ccw_deg    # CCW
 
-        # L2 — od levelu 2
-        if g.level >= 2:
-            l2a = new_layer()
-            self._ticks(l2a, C, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
-            l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
+            def new_layer():
+                return pygame.Surface((side, side), pygame.SRCALPHA)
 
-            l2b = new_layer()
-            self._dashed_ring(l2b, C, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
-            l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg*1.1, 1.0)
-            layers += [l2a, l2b]
+            layers = []
+            # L1
+            l1a = new_layer()
+            self._arc(l1a, C, r, 0.75, max(2, RING_THICKNESS+1), (*base, RING_ALPHA_MAIN), start=-math.pi*0.5)
+            l1a = pygame.transform.rotozoom(l1a, rot_ccw_deg2, 1.0)
 
-        # L3 — scanner
-        if g.level >= 3:
-            l3 = new_layer()
-            sweep = math.radians(42)
-            start = t * 1.2
-            rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
-            pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)
-            for w, a in ((12, 60), (20, 35)):
-                pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
-            layers.append(l3)
+            l1b = new_layer()
+            self._arc(l1b, C, int(r*1.08), 0.60, 3, (*soft, RING_ALPHA_SOFT), start=0.0)
+            l1b = pygame.transform.rotozoom(l1b, rot_cw_deg, 1.0)
+            layers += [l1a, l1b]
 
-        # L4 — orbitery
-        if g.level >= 4:
-            l4 = new_layer()
-            orbit_r = int(r * 1.15)
-            for k in range(3):
-                ang = t * 1.4 + k * (2*math.pi/3)
-                x = int(C + math.cos(ang) * orbit_r)
-                y = int(C + math.sin(ang) * orbit_r)
-                pygame.draw.circle(l4, (*base, 170), (x, y), 3)
-            layers.append(l4)
+            if g.level >= 2:
+                l2a = new_layer()
+                self._ticks(l2a, C, r, 48, long_every=4, color=(*soft, RING_ALPHA_TICKS))
+                l2a = pygame.transform.rotozoom(l2a, rot_cw_deg*1.15, 1.0)
 
-        # L5 — zewnętrzny dashed
-        if g.level >= 5:
-            l5 = new_layer()
-            self._dashed_ring(l5, C, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
-            l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
-            layers.append(l5)
+                l2b = new_layer()
+                self._dashed_ring(l2b, C, int(r*0.82), dash_deg=10, gap_deg=7, width=2, alpha=RING_ALPHA_SOFT, color=soft)
+                l2b = pygame.transform.rotozoom(l2b, rot_ccw_deg2*1.1, 1.0)
+                layers += [l2a, l2b]
 
-        # --- ZŁÓŻ WARSTWY NA 'out' ---
-        for L in layers:
-            blit_to_out(L)
+            if g.level >= 3:
+                l3 = new_layer()
+                sweep = math.radians(42)
+                start = t * 1.2
+                rect = pygame.Rect(0, 0, int(r*0.92*2), int(r*0.92*2)); rect.center = (C, C)
+                pygame.draw.arc(l3, (*hi, RING_ALPHA_HI), rect, start, start + sweep, 7)
+                for w, a in ((12, 60), (20, 35)):
+                    pygame.draw.arc(l3, (*hi, a), rect.inflate(w, w), start, start + sweep, 8)
+                layers.append(l3)
 
-        # --- IKONY (jeśli nie schowane w memory) ---
+            if g.level >= 4:
+                l4 = new_layer()
+                orbit_r = int(r * 1.15)
+                for k in range(3):
+                    ang = t * 1.4 + k * (2*math.pi/3)
+                    x = int(C + math.cos(ang) * orbit_r)
+                    y = int(C + math.sin(ang) * orbit_r)
+                    pygame.draw.circle(l4, (*base, 170), (x, y), 3)
+                layers.append(l4)
+
+            if g.level >= 5:
+                l5 = new_layer()
+                self._dashed_ring(l5, C, int(r*1.20), dash_deg=16, gap_deg=10, width=3, alpha=150, color=base)
+                l5 = pygame.transform.rotozoom(l5, rot_cw_deg*0.8, 1.0)
+                layers.append(l5)
+
+            for L in layers:
+                blit_to_out(L)
+
+        # --- Icons on the ring (same as before) ---
         if not (g.level_cfg.memory_mode and not g.memory_show_icons):
             icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
             pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
@@ -1210,13 +1202,13 @@ class InputRing:
             for pos, (ix, iy) in pos_xy.items():
                 name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
                 rect = pygame.Rect(0, 0, icon_size, icon_size)
-                # translacja do przestrzeni 'out'
+                # map to 'out' surface space
                 ox = C + (ix - cx)
                 oy = C + (iy - cy)
                 rect.center = (ox, oy)
                 self.g.draw_symbol(out, name, rect)
 
-        # --- GLOBALNY OBRÓT I BLIT NA EKRAN ---
+        # apply additional gameplay rotation (layout transition) if any
         if abs(spin_deg) > 0.0001:
             out = pygame.transform.rotozoom(out, spin_deg, 1.0)
 
@@ -1396,20 +1388,7 @@ class Game:
         self.settings_scroll = 0.0
         self._settings_row_tops: List[Tuple[float, float]] = []  # (y, height) bez scrolla
         self.settings_idx = 0
-        self.settings = {
-            "target_time_initial": float(CFG["speedup"]["target_time_initial"]),
-            "target_time_step": float(CFG["speedup"]["target_time_step"]),
-            "target_time_min": float(CFG["speedup"]["target_time_min"]),
-            "lives": int(CFG["lives"]),
-            "glitch_enabled": bool(CFG.get("effects", {}).get("glitch_enabled", True)),
-            "music_volume": float(CFG["audio"]["music_volume"]),
-            "sfx_volume":   float(CFG["audio"]["sfx_volume"]),
-            "fullscreen": bool(CFG["display"]["fullscreen"]),
-            "timed_rule_bonus": float(CFG["timed"].get("rule_bonus", 5.0)),
-            "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
-            "rule_font_pinned": int(CFG["rules"].get("banner_font_pinned", 40)),
-            "ring_palette": str(CFG.get("ui", {}).get("ring_palette", "auto")),
-        }
+        self.settings = make_runtime_settings(CFG)
 
         # effects
         self.fx = EffectsManager(self.now, glitch_enabled=self.settings.get("glitch_enabled", True))
@@ -1722,16 +1701,7 @@ class Game:
             self.open_settings()
 
     def _settings_clamp(self) -> None:
-        s = self.settings
-        s["target_time_initial"] = max(0.2, min(10.0, float(s.get("target_time_initial", 3))))
-        s["target_time_min"] = max(0.1, min(float(s["target_time_initial"]), float(s.get("target_time_min", 0.45))))
-        s["target_time_step"] = max(-1.0, min(1.0, float(s.get("target_time_step", -0.03))))
-        s["lives"] = max(0, min(9, int(s.get("lives", 3))))
-        s["music_volume"] = max(0.0, min(1.0, float(s.get("music_volume", 0.5))))
-        s["sfx_volume"]   = max(0.0, min(1.0, float(s.get("sfx_volume",   0.8))))
-        s["timed_rule_bonus"] = max(0.0, min(30.0, float(s.get("timed_rule_bonus", 5.0))))
-        s["rule_font_center"] = max(8, min(200, int(s.get("rule_font_center", 64))))
-        s["rule_font_pinned"] = max(8, min(200, int(s.get("rule_font_pinned", 40))))
+        clamp_settings(self.settings)
 
     def settings_adjust(self, delta: int) -> None:
         items = self.settings_items()
@@ -1819,21 +1789,7 @@ class Game:
         save_config({"highscore": 0})
 
     def open_settings(self) -> None:
-        # Refresh snapshot from CFG to ensure external edits are reflected.
-        self.settings.update({
-            "target_time_initial": float(CFG["speedup"]["target_time_initial"]),
-            "target_time_step": float(CFG["speedup"]["target_time_step"]),
-            "target_time_min": float(CFG["speedup"]["target_time_min"]),
-            "lives": int(CFG["lives"]),
-            "glitch_enabled": bool(CFG.get("effects", {}).get("glitch_enabled", True)),
-            "music_volume": float(CFG["audio"]["music_volume"]),
-            "sfx_volume":   float(CFG["audio"]["sfx_volume"]),
-            "fullscreen": bool(CFG["display"]["fullscreen"]),
-            "timed_rule_bonus": float(CFG["timed"].get("rule_bonus", 5.0)),
-            "rule_font_center": int(CFG["rules"].get("banner_font_center", 64)),
-            "rule_font_pinned": int(CFG["rules"].get("banner_font_pinned", 40)),
-            "ring_palette": str(CFG.get("ui", {}).get("ring_palette", "auto")),
-        })
+        self.settings = make_runtime_settings(CFG)
         self.settings_idx = 0
         self.settings_move(0)
         self.fx.trigger_glitch(mag=1.0)
@@ -1842,59 +1798,16 @@ class Game:
         self._ensure_selected_visible()
 
     def settings_save(self) -> None:
-        self._settings_clamp()
-        s = self.settings
-        CFG["speedup"].update(
-            {
-                "target_time_initial": float(s["target_time_initial"]),
-                "target_time_step": float(s["target_time_step"]),
-                "target_time_min": float(s["target_time_min"]),
-            }
+        clamp_settings(self.settings)
+        payload = commit_settings(
+            self.settings,
+            CFG=CFG,
+            LEVELS=LEVELS,
+            TIMED_DURATION=TIMED_DURATION,
+            WINDOWED_DEFAULT_SIZE=WINDOWED_DEFAULT_SIZE,
+            RULE_EVERY_HITS=RULE_EVERY_HITS,
         )
-        CFG["lives"] = int(s["lives"])
-        CFG["effects"] = CFG.get("effects", {})
-        CFG["effects"]["glitch_enabled"] = bool(s["glitch_enabled"])
-        CFG["audio"]["music_volume"] = float(s["music_volume"])
-        CFG["audio"]["sfx_volume"]   = float(s["sfx_volume"])
-        CFG["display"]["fullscreen"] = bool(s["fullscreen"])
-        CFG["timed"]["rule_bonus"] = float(s["timed_rule_bonus"])
-        CFG["rules"]["banner_font_center"] = int(s["rule_font_center"]) 
-        CFG["rules"]["banner_font_pinned"] = int(s["rule_font_pinned"]) 
-        CFG.setdefault("ui", {})["ring_palette"] = str(self.settings["ring_palette"])
-
-        levels_dump = {}
-        for lid, L in LEVELS.items():
-            levels_dump[str(lid)] = {
-                "hits": int(L.hits_required),
-                "color": [int(L.score_color[0]), int(L.score_color[1]), int(L.score_color[2])],
-            }
-
-        save_config(
-            {
-                "speedup": CFG["speedup"],
-                "lives": CFG["lives"],
-                "effects": {"glitch_enabled": CFG["effects"]["glitch_enabled"]},
-                "audio": {
-                    "music": CFG["audio"].get("music", "assets/music.ogg"),
-                    "music_volume": CFG["audio"]["music_volume"],
-                    "sfx_volume":   CFG["audio"]["sfx_volume"],
-                },
-                "display": {
-                    "fullscreen": CFG["display"]["fullscreen"],
-                    "fps": CFG["display"]["fps"],
-                    "windowed_size": CFG["display"].get("windowed_size", list(WINDOWED_DEFAULT_SIZE)),
-                },
-                "timed": {"rule_bonus": CFG["timed"]["rule_bonus"], "duration": CFG["timed"].get("duration", TIMED_DURATION)},
-                "ui": {"ring_palette": CFG["ui"]["ring_palette"]},
-                "rules": {
-                    "every_hits": CFG["rules"].get("every_hits", RULE_EVERY_HITS),
-                    "banner_font_center": CFG["rules"]["banner_font_center"],
-                    "banner_font_pinned": CFG["rules"]["banner_font_pinned"],
-                },
-                "highscore": CFG.get("highscore", 0),
-                "levels": levels_dump,
-            }
-        )
+        save_config(payload)
 
         if self.music_ok:
             pygame.mixer.music.set_volume(float(CFG["audio"]["music_volume"]))

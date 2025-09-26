@@ -16,7 +16,7 @@
   "speedup": {
     "target_time_initial": 9.99999999999998,
     "target_time_min": 0.30000000000000004,
-    "target_time_step": -0.09999999999999999
+    "target_time_step": -0.019999999999999997
   },
   "timed": {
     "duration": 60.0,
@@ -28,7 +28,7 @@
     "banner_font_center": 64,
     "banner_font_pinned": 40
   },
-  "lives": 3,
+  "lives": 5,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
     "music_volume": 0.30000000000000004,
