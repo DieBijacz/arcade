@@ -96,6 +96,7 @@ LEVEL_COLOR_CHOICES: List[Tuple[int,int,int]] = [
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
 GAP = 0.04                       # przerwa między obiektami w siatce
 FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
+INPUT_ACCEPT_DELAY = 0.12
 TEXT_SHADOW_OFFSET = (2, 2)
 UI_RADIUS = 8
 
@@ -303,6 +304,8 @@ SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                 # minimalny „dodatkowy” 
 
 # Typography (rozmiary bazowe; w kodzie są skalowane do okna)
 FONT_PATH = str(PKG_DIR / "assets" / "font" / "Orbitron-VariableFont_wght.ttf")
+if not os.path.exists(FONT_PATH):
+    pass
 FONT_SIZE_SMALL = 18
 FONT_SIZE_MID = 24
 FONT_SIZE_BIG = 60
@@ -493,7 +496,6 @@ class TutorialPlayer:
 
         # 1) update aktywnych
         still = []
-        just_became_empty = False
         before = bool(self._active)
 
         for inst in self._active:
@@ -524,7 +526,6 @@ class TutorialPlayer:
 
         self._active = [i for i in still if not i.get('rot_scheduled', False)]
         if before and not self._active:
-            just_became_empty = True
             # jeśli nic nie ustawiło _next_ready_at (np. brak rotacji) – daj zwykły oddech
             self._next_ready_at = max(self._next_ready_at, now + self.seq_gap)
 
@@ -1279,21 +1280,20 @@ class Game:
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
 
+        # --- window ---
+        self.last_windowed_size = tuple(CFG.get("display", {}).get("windowed_size", WINDOWED_DEFAULT_SIZE))
+        self.last_window_size = self.screen.get_size()
+
         # --- key delay / debouncing for keyboard ---
         self.keys_down: set[int] = set()
         self.lock_until_all_released = False
         self.accept_after = 0.0
 
         # --- fonts ---
-        self.font = pygame.font.Font(FONT_PATH, FONT_SIZE_SMALL)
-        self.big = pygame.font.Font(FONT_PATH, FONT_SIZE_BIG)
-        self.mid = pygame.font.Font(FONT_PATH, FONT_SIZE_MID)
-        self.timer_font = pygame.font.Font(FONT_PATH, TIMER_FONT_SIZE)
         self.hud_label_font = pygame.font.Font(FONT_PATH, HUD_LABEL_FONT_SIZE)
         self.hud_value_font = pygame.font.Font(FONT_PATH, HUD_VALUE_FONT_SIZE)
-        self.score_label_font = pygame.font.Font(FONT_PATH, SCORE_LABEL_FONT_SIZE)
-        self.score_value_font = pygame.font.Font(FONT_PATH, SCORE_VALUE_FONT_SIZE)
-        self.settings_font = pygame.font.Font(FONT_PATH, FONT_SIZE_SETTINGS)
+        self._font_cache: dict[tuple[str,int,bool,bool], pygame.font.Font] = {}
+        self._sysfont_fallback = "arial"
 
         # background
         self.bg_img_raw = self._load_background()
@@ -1301,13 +1301,11 @@ class Game:
 
         # layout & framebuffer
         self._recompute_layout()
-        self._rescale_background()
         self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
 
-        # fonts for rule banner stages (center vs pinned)
+        # fonts for rule banner stages (center vs pinned) – ustawi je _rebuild_fonts()
         self.rule_font_center: Optional[pygame.font.Font] = None
         self.rule_font_pinned: Optional[pygame.font.Font] = None
-        self._build_rule_fonts()
         self.ui_scale = 1.0
         self._rebuild_fonts() 
 
@@ -1437,6 +1435,26 @@ class Game:
     def px(self, v: float) -> int:
         return max(1, int(round(v * getattr(self, "ui_scale", 1.0))))
 
+    def _lock_inputs(self, delay: float = INPUT_ACCEPT_DELAY) -> None:
+        self.lock_until_all_released = True
+        self.accept_after = self.now() + max(0.0, delay)
+
+    def _try_start_exit_slide(self, required_symbol: str) -> bool:
+        if self.banner.is_active(self.now()):
+            return False
+        pos = next((p for p, s in self.ring_layout.items() if s == required_symbol), None)
+        if not pos or not self.target:
+            return False
+
+        now = self.now()
+        self.exit_dir_pos = pos
+        self.fx.start_exit_slide(self.target, duration=EXIT_SLIDE_SEC)
+
+        # pauza gry na czas zjazdu
+        self.pause_start = now
+        self.pause_until = max(self.pause_until, now + EXIT_SLIDE_SEC)
+        return True
+
     @staticmethod
     def _ease_out_cubic(t: float) -> float:
         t = max(0.0, min(1.0, t))
@@ -1456,6 +1474,16 @@ class Game:
     def lives_enabled(self) -> bool:
         return int(self.settings.get("lives", MAX_LIVES)) > 0
 
+    def measure_text(self, text: str, *, font: Optional[pygame.font.Font] = None, size_px: Optional[int] = None, scale: float = 1.0) -> tuple[int, int]:
+        if font is None:
+            px = self.px(size_px) if size_px else self.font.get_height()
+            font = self._font(px)
+        surf = font.render(text, True, (255, 255, 255))
+        if scale != 1.0:
+            w, h = surf.get_size()
+            return (max(1, int(w * scale)), max(1, int(h * scale)))
+        return surf.get_size()
+
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
     def _ensure_framebuffer(self) -> None:
@@ -1468,35 +1496,52 @@ class Game:
         s = min(sx, sy)
         return max(0.6, min(2.2, s))  # clamp
 
+    def _load_font_file(self, size: int, *, bold: bool = False, italic: bool = False) -> pygame.font.Font:
+        path = FONT_PATH
+        try:
+            if path and os.path.exists(path):
+                f = pygame.font.Font(path, size)
+                if hasattr(f, "set_bold"):   f.set_bold(bold)
+                if hasattr(f, "set_italic"): f.set_italic(italic)
+                return f
+            # brak pliku → systemowy fallback
+            return pygame.font.SysFont(self._sysfont_fallback, size, bold=bold, italic=italic)
+        except Exception:
+            return pygame.font.SysFont(self._sysfont_fallback, size, bold=bold, italic=italic)
+
+    def _font(self, px: int, *, bold: bool = False, italic: bool = False) -> pygame.font.Font:
+        size = max(8, int(round(px)))
+        key = (FONT_PATH, size, bool(bold), bool(italic))
+        f = self._font_cache.get(key)
+        if f is None:
+            f = self._load_font_file(size, bold=bold, italic=italic)
+            self._font_cache[key] = f
+        return f
+
     def _rebuild_fonts(self) -> None:
         self.ui_scale = self._compute_ui_scale()
+        self._font_cache.clear()
 
         def S(px: int) -> int:
             return max(8, int(round(px * self.ui_scale)))
 
         # główne fonty UI
-        self.font         = pygame.font.Font(FONT_PATH, S(FONT_SIZE_SMALL))
-        self.mid          = pygame.font.Font(FONT_PATH, S(FONT_SIZE_MID))
-        self.big          = pygame.font.Font(FONT_PATH, S(FONT_SIZE_BIG))
-        self.timer_font   = pygame.font.Font(FONT_PATH, S(TIMER_FONT_SIZE))
-        self.hud_label_font   = pygame.font.Font(FONT_PATH, S(HUD_LABEL_FONT_SIZE))
-        self.hud_value_font   = pygame.font.Font(FONT_PATH, S(HUD_VALUE_FONT_SIZE))
-        self.score_label_font = pygame.font.Font(FONT_PATH, S(SCORE_LABEL_FONT_SIZE))
-        self.score_value_font = pygame.font.Font(FONT_PATH, S(SCORE_VALUE_FONT_SIZE))
-        self.settings_font    = pygame.font.Font(FONT_PATH, S(FONT_SIZE_SETTINGS))
+        self.font              = self._font(S(FONT_SIZE_SMALL))
+        self.mid               = self._font(S(FONT_SIZE_MID))
+        self.big               = self._font(S(FONT_SIZE_BIG))
+        self.timer_font        = self._font(S(TIMER_FONT_SIZE))
+        self.hud_label_font    = self._font(S(HUD_LABEL_FONT_SIZE))
+        self.hud_value_font    = self._font(S(HUD_VALUE_FONT_SIZE))
+        self.score_label_font  = self._font(S(SCORE_LABEL_FONT_SIZE))
+        self.score_value_font  = self._font(S(SCORE_VALUE_FONT_SIZE))
+        self.settings_font     = self._font(S(FONT_SIZE_SETTINGS))
 
         # fonty banera reguły – bazują na wartościach z configu, ale też skaluje je UI
         c = S(int(CFG["rules"].get("banner_font_center", 64)))
         p = S(int(CFG["rules"].get("banner_font_pinned", 40)))
-        self.rule_font_center = pygame.font.Font(FONT_PATH, max(8, c))
-        self.rule_font_pinned = pygame.font.Font(FONT_PATH, max(8, p))
-        self.hint_font = pygame.font.Font(FONT_PATH, max(8, int(self.font.get_height() * 0.85)))
-
-    def _build_rule_fonts(self) -> None:
-        c = int(CFG["rules"].get("banner_font_center", 64))
-        p = int(CFG["rules"].get("banner_font_pinned", 40))
-        self.rule_font_center = pygame.font.Font(FONT_PATH, c)
-        self.rule_font_pinned = pygame.font.Font(FONT_PATH, p)
+        self.rule_font_center = self._font(max(8, c))
+        self.rule_font_pinned = self._font(max(8, p))
+        self.hint_font        = self._font(max(8, int(self.font.get_height() * 0.85)))
 
     def _load_background(self) -> Optional[pygame.Surface]:
         path = CFG.get("images", {}).get("background") if isinstance(CFG.get("images"), dict) else None
@@ -1569,20 +1614,29 @@ class Game:
 
 # ---- Okno/tryb wyświetlania & rozmiar ----
 
+    def _set_windowed_size(self, width: int, height: int) -> None:
+        width, height = self._snap_to_aspect(width, height)
+
+        # jeśli rozmiar po snapie pokrywa się z aktualnym, nic nie rób
+        cur_w, cur_h = self.screen.get_size()
+        if (cur_w, cur_h) == (width, height):
+            return
+
+        self.screen = pygame.display.set_mode((width, height), WINDOWED_FLAGS)
+        self.last_windowed_size = (width, height)
+        self.last_window_size = (width, height)
+        persist_windowed_size(width, height)
+
+        self._recompute_layout()
+
     def _set_display_mode(self, fullscreen: bool) -> None:
         if fullscreen:
-            # systemowy fullscreen (bez zabawy z rozmiarem pulpitu)
             self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.last_window_size = self.screen.get_size()
+            self._recompute_layout()
         else:
-            # klasyczne okno z paskiem tytułu
             w, h = getattr(self, "last_windowed_size", WINDOWED_DEFAULT_SIZE)
-            w, h = self._snap_to_aspect(w, h)
-            self.screen = pygame.display.set_mode((w, h), WINDOWED_FLAGS)
-            self.last_windowed_size = self.screen.get_size()
-            persist_windowed_size(*self.last_windowed_size)
-
-        self.last_window_size = self.screen.get_size()
-        self._recompute_layout()
+            self._set_windowed_size(w, h)
         pygame.display.set_caption("Remap")
 
     def _snap_to_aspect(self, width: int, height: int) -> Tuple[int, int]:
@@ -1603,27 +1657,10 @@ class Game:
         height = max(ASPECT_SNAP_MIN_SIZE[1], height)
         return width, height
 
-    def apply_fullscreen_now(self) -> None:
-        want_full = bool(self.settings.get("fullscreen", True))
-        if want_full:
-            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-        else:
-            w, h = getattr(self, "last_window_size", None) or tuple(
-                CFG.get("display", {}).get("windowed_size", WINDOWED_DEFAULT_SIZE)
-            )
-            self.screen = pygame.display.set_mode((w, h), WINDOWED_FLAGS)
-            persist_windowed_size(*self.screen.get_size())
-        self.last_window_size = self.screen.get_size()
-        self._recompute_layout()
-
     def handle_resize(self, width: int, height: int) -> None:
-        if bool(CFG.get("display", {}).get("fullscreen", True)):
+        if bool(self.settings.get("fullscreen", CFG.get("display", {}).get("fullscreen", True))):
             return
-        width, height = self._snap_to_aspect(width, height)
-        self.screen = pygame.display.set_mode((width, height), WINDOWED_FLAGS)
-        self.last_window_size = (width, height)
-        persist_windowed_size(width, height)
-        self._recompute_layout()
+        self._set_windowed_size(width, height)
 
 # ---- Klawisze i mapowania wejść ----
 
@@ -1743,7 +1780,7 @@ class Game:
 
         if key == "fullscreen":
             self.settings["fullscreen"] = not self.settings["fullscreen"]
-            self.apply_fullscreen_now()
+            self._set_display_mode(bool(self.settings["fullscreen"]))
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
@@ -1813,7 +1850,7 @@ class Game:
             sfx.set_volume(float(CFG["audio"]["sfx_volume"]))
 
         self._set_display_mode(bool(CFG["display"]["fullscreen"]))
-        self._build_rule_fonts()
+        self._rebuild_fonts()
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
@@ -1882,18 +1919,6 @@ class Game:
             for i in range(1, N):                # „w trakcie”
                 self.rotation_breaks.add(i * seg)
 
-    def _rotate_ring_random(self) -> None:
-        current = [self.ring_layout[p] for p in RING_POSITIONS]
-        symbols = list(SYMS)
-        while True:
-            random.shuffle(symbols)
-            if symbols != current:
-                break
-        for p, s in zip(RING_POSITIONS, symbols):
-            self.ring_layout[p] = s
-        self._recompute_keymap()
-        self.fx.trigger_glitch(mag=0.6)  # czytelny efekt zmiany
-
     def level_up(self) -> None:
         if self.level < self.levels_active:
             self.level += 1
@@ -1943,6 +1968,16 @@ class Game:
 
         # 3) Nowy target na start rozgrywki
         self.new_target()
+
+    def _cleanup_exit_slide_if_ready(self) -> None:
+        if not self.exit_dir_pos:
+            return
+        if self.fx.is_exit_active():
+            return
+        self.fx.clear_exit()
+        self.exit_dir_pos = None
+        if self.scene is Scene.GAME and not self.banner.is_active(self.now()):
+            self.new_target()
 
 # ---- Pętla gry i wejścia (flow rozgrywki) ----
 
@@ -2016,8 +2051,8 @@ class Game:
     def handle_input_symbol(self, name: str) -> None:
         if self.scene is not Scene.GAME or not self.target:
             return
-        
-        # MEMORY: zlicz ruchy do ukrycia (liczy KAŻDY ruch w scenie GAME)
+
+        # MEMORY ruchy
         if self.level_cfg.memory_mode and self.memory_show_icons:
             self.memory_moves_count += 1
             if self.memory_moves_count >= MEMORY_HIDE_AFTER_MOVES:
@@ -2025,77 +2060,60 @@ class Game:
 
         required = self.rules.apply(self.target)
         if name == required:
-            # Dobra odpowiedz
-
+            # --- DOBRA ODPOWIEDŹ ---
             self.score += 1
             self.streak += 1
-            self.fx.trigger_pulse('score')  
+            self.fx.trigger_pulse('score')
             if self.sfx.get("point"): self.sfx["point"].play()
-            if self.streak > 0 and self.streak % 10 == 0:
+            if self.streak and self.streak % 10 == 0:
                 self.fx.trigger_pulse_streak()
             self.hits_in_level += 1
 
             if self.mode is Mode.TIMED:
                 self.time_left += 1.0
-            if self.mode is Mode.SPEEDUP:
+            else:  # SPEEDUP
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
 
-            # cykliczne odświeżanie mappingu (jeśli aktywne)
+            # cykliczny remap (baner)
             if self.rules.on_correct():
                 self.rules.roll_mapping(SYMS)
                 self._start_mapping_banner(from_pinned=True)
 
-            # rotacje w tym levelu
+            # rotacje w levelu
             if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
                 self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
-            # po level_up() — jeśli przeszliśmy do INSTRUCTION, przerywamy
+            # Level up? Przerywamy flow (instrukcja wystartuje nowy cel później)
             if self.hits_in_level >= self.level_goal:
                 self.level_up()
                 if self.scene is Scene.INSTRUCTION:
-                    # nie odpalaj exit-slide; nowy target pojawi się po instrukcji
-                    self.lock_until_all_released = True
-                    self.accept_after = self.now() + 0.12
+                    self._lock_inputs()
                     return
 
-            # uruchamianie exit-slide — tylko jeśli baner nie jest aktywny
-            pos = next((p for p, s in self.ring_layout.items() if s == required), None)
-            if pos and self.target and not self.banner.is_active(self.now()):
-                now = self.now()
-                self.exit_dir_pos = pos
-                self.fx.start_exit_slide(self.target, duration=EXIT_SLIDE_SEC)
-
-                # nie nadpisuj dłuższej pauzy (np. od banera)
-                self.pause_start = now
-                self.pause_until = now + EXIT_SLIDE_SEC
-
-                self.lock_until_all_released = True
-                self.accept_after = self.now() + 0.12
-            else:
-                # fallback
+            # Spróbuj uruchomić exit-slide; jeśli nie — od razu nowy target
+            if not self._try_start_exit_slide(required):
                 self.new_target()
-                self.lock_until_all_released = True
-                self.accept_after = self.now() + 0.12
 
-        else:
+            self._lock_inputs()
+            return
 
-            #Zla odpowiedz
+        # --- ZŁA ODPOWIEDŹ ---
+        if self.sfx.get("wrong"): self.sfx["wrong"].play()
+        if self.rules.current_mapping and self.target == self.rules.current_mapping[0]:
+            self.fx.trigger_pulse_banner()
+        self.streak = 0
+        self.fx.trigger_shake()
+        self.fx.trigger_glitch()
 
-            if self.sfx.get("wrong"):  self.sfx["wrong"].play()
-
-            if self.rules.current_mapping and self.target == self.rules.current_mapping[0]:
-                self.fx.trigger_pulse_banner()
-            self.streak = 0
-            self.fx.trigger_shake()
-            self.fx.trigger_glitch()
-            if self.mode is Mode.TIMED:
-                self.time_left -= 1.0
-                if self.time_left <= 0.0:
-                    self.time_left = 0.0
-                    self.end_game()
-            if self.mode is Mode.SPEEDUP and self.lives_enabled():
+        if self.mode is Mode.TIMED:
+            self.time_left -= 1.0
+            if self.time_left <= 0.0:
+                self.time_left = 0.0
+                self.end_game()
+        else:  # SPEEDUP
+            if self.lives_enabled():
                 self.lives -= 1
                 if self.lives <= 0:
                     self.end_game()
@@ -2144,24 +2162,7 @@ class Game:
                 self.target_deadline += paused
             self._last_tick = now
 
-            if not self.fx.is_exit_active() and self.exit_dir_pos:
-                self.fx.clear_exit()
-                self.exit_dir_pos = None
-                self.new_target()
-
-            # jeśli to koniec exit-slide — wyczyść i spawnuj nowy cel
-            if hasattr(self.fx, "is_exit_active") and not self.fx.is_exit_active() and self.exit_dir_pos:
-                self.fx.clear_exit()
-                self.exit_dir_pos = None
-                self.new_target()
-        
-            # Jeśli skończyła się pauza animacji – posprzątaj i spawn nowego (tylko jeśli nie ma już pauzy)
-            if (not self.pause_until and
-                hasattr(self.fx, "is_exit_active") and not self.fx.is_exit_active() and
-                getattr(self, "exit_dir_pos", None)):
-                self.fx.clear_exit()
-                self.exit_dir_pos = None
-                self.new_target()
+            self._cleanup_exit_slide_if_ready()
 
         # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
         if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
@@ -2209,6 +2210,8 @@ class Game:
             if now >= self.memory_hide_deadline:
                 self.memory_show_icons = False
 
+        self._cleanup_exit_slide_if_ready()
+
         # wejścia gracza
         for n in iq.pop_all():
             self.handle_input_symbol(n)
@@ -2238,87 +2241,65 @@ class Game:
         sh.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         return sh
 
-    def draw_text(
-        self,
-        *args,
-        **kwargs
-    ) -> pygame.Surface:
-        # --- Rozpoznanie wariantu wywołania ---
+    def draw_text(self, *args, **kwargs) -> pygame.Surface:
         if args and not isinstance(args[0], str):
             # LEGACY: (font, text, pos, ...)
-            font = args[0]
-            text = args[1] if len(args) > 1 else ""
-            pos  = args[2] if len(args) > 2 else None
-            color = kwargs.get("color", INK)
-            shadow = kwargs.get("shadow", True)
-            glitch = kwargs.get("glitch", True)
-            scale = kwargs.get("scale", 1.0)
-            alpha = kwargs.get("alpha", None)
-            shadow_offset = kwargs.get("shadow_offset", None)
+            font  = args[0]
+            text  = args[1] if len(args) > 1 else ""
+            pos   = args[2] if len(args) > 2 else None
             size_px = None
         else:
-            # NOWY: (text, ...)
-            text = args[0] if args else ""
-            pos  = kwargs.get("pos", None)
-            color = kwargs.get("color", INK)
-            font = kwargs.get("font", None)
+            # NEW: (text, ...)
+            text  = args[0] if args else ""
+            pos   = kwargs.get("pos", None)
+            font  = kwargs.get("font", None)
             size_px = kwargs.get("size_px", None)
-            shadow = kwargs.get("shadow", True)
-            glitch = kwargs.get("glitch", True)
-            scale = kwargs.get("scale", 1.0)
-            alpha = kwargs.get("alpha", None)
-            shadow_offset = kwargs.get("shadow_offset", None)
 
-        # --- Render ---
-        fnt = font
-        if fnt is None:
+        color         = kwargs.get("color", INK)
+        shadow        = kwargs.get("shadow", True)
+        glitch        = kwargs.get("glitch", True)
+        scale         = float(kwargs.get("scale", 1.0))
+        alpha         = kwargs.get("alpha", None)
+        shadow_offset = kwargs.get("shadow_offset", TEXT_SHADOW_OFFSET)
+
+        # --- wybór fontu ---
+        if font is None:
             px = self.px(size_px) if size_px else self.font.get_height()
-            fnt = pygame.font.Font(FONT_PATH, max(8, int(px)))
+            font = self._font(px)
 
-        def _glitch_text(s: str) -> str:
-            if glitch and self.fx.is_text_glitch_active():
-                out = []
-                for ch in s:
-                    if ch.isspace():
-                        out.append(ch)
-                    elif random.random() < TEXT_GLITCH_CHAR_PROB:
-                        out.append(random.choice(TEXT_GLITCH_CHARSET))
-                    else:
-                        out.append(ch)
-                return "".join(out)
-            return s
+        # --- tekst (z ewentualnym glitchowaniem) ---
+        render_text = text
+        if glitch and self.fx.is_text_glitch_active():
+            render_text = self._glitch_text(text)
 
-        render_text = _glitch_text(text)
-        base = fnt.render(render_text, True, color)
+        base = font.render(render_text, True, color)
 
+        # --- skalowanie (jeśli trzeba) ---
         if scale != 1.0:
             bw, bh = base.get_size()
-            base = pygame.transform.smoothscale(base, (max(1, int(bw*scale)), max(1, int(bh*scale))))
+            base = pygame.transform.smoothscale(base, (max(1, int(bw * scale)), max(1, int(bh * scale))))
 
+        # --- cień (z użyciem istniejącego helpera) ---
+        out = base
         if shadow:
-            dx, dy = (shadow_offset or TEXT_SHADOW_OFFSET)
-            sh = pygame.Surface(base.get_size(), pygame.SRCALPHA)
-            sh.blit(base, (0, 0))
-            tint = pygame.Surface(base.get_size(), pygame.SRCALPHA)
-            tint.fill((0, 0, 0, 255))
-            sh.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-
-            out_w = base.get_width() + max(0, dx)
-            out_h = base.get_height() + max(0, dy)
+            dx, dy = shadow_offset
+            sh = self._shadow_text(base)
+            out_w = base.get_width() + max(0, int(dx))
+            out_h = base.get_height() + max(0, int(dy))
             surf = pygame.Surface((out_w, out_h), pygame.SRCALPHA)
-            surf.blit(sh, (dx, dy))
+            surf.blit(sh, (int(dx), int(dy)))
             surf.blit(base, (0, 0))
-        else:
-            surf = base
+            out = surf
 
         if alpha is not None:
-            surf.set_alpha(alpha)
+            out.set_alpha(alpha)
 
-        # --- Opcjonalny blit ---
+        # --- opcjonalny blit ---
         if pos is not None:
-            self.screen.blit(surf, pos)
+            x, y = pos
+            self.screen.blit(out, (int(x), int(y)))
 
-        return surf
+        return out
 
     def draw_chip(
         self,
@@ -2724,17 +2705,6 @@ class Game:
 
         if right_start < self.topbar_rect.right:
             self._draw_underline_segment_with_shadow(right_start, self.topbar_rect.right, y, th, col)
-
-        # --- obszary do tekstów (bez rysowania tła; tylko rozmiar pod layout) ---
-        pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
-        left_block = pygame.Rect(
-            pad_x, self.topbar_rect.top,
-            max(1, cap.left - pad_x * 2), self.topbar_rect.height
-        )
-        right_block = pygame.Rect(
-            cap.right + pad_x, self.topbar_rect.top,
-            max(1, self.w - pad_x - (cap.right + pad_x)), self.topbar_rect.height
-        )
 
         # --- STREAK / HIGHSCORE
         pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)

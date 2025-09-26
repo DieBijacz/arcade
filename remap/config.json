@@ -31,7 +31,7 @@
   "lives": 5,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
-    "music_volume": 0.30000000000000004,
+    "music_volume": 0.05000000000000007,
     "sfx_volume": 0.2999999999999999
   },
   "effects": {
