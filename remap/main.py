@@ -86,12 +86,6 @@ SYMBOL_COLORS = {
     "SQUARE":   (255, 215, 0),
 }
 
-LEVEL_COLOR_CHOICES: List[Tuple[int,int,int]] = [
-    (235,235,235), (60,200,120), (90,200,255),
-    (255,170,80), (220,80,80), (180,120,255),
-    (255,210,90), (180,200,230)
-]
-
 # Ogólne odstępy/układ
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
 GAP = 0.04                       # przerwa między obiektami w siatce
@@ -375,28 +369,25 @@ class LevelCfg:
     memory_intro_sec: float = 3.0                           # ile sekund podglądu układu ringu przy starcie memory (nadpisywalne)
     instruction: str = ""                                   # krótki tekst instrukcji
     instruction_sec: float = 5.0                            # ile sekund trwa ekran instrukcji
-    score_color: Tuple[int,int,int] = SCORE_VALUE_COLOR
     hits_required: int = LEVEL_GOAL_PER_LEVEL
 
 LEVELS: Dict[int, LevelCfg] = {
     1: LevelCfg(1,
         rules=[],
         instruction="Level 1 — Classic\nOdpowiadaj poprawnie.",
-        score_color=(235,235,235),
         hits_required=15
     ),
     2: LevelCfg(2,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
         instruction="Level 2 — New Rule\nZwracaj uwagę na baner.",
         instruction_sec=5.0,
-        score_color=(60,200,120),
         hits_required=15
     ),
     3: LevelCfg(3,
         rules=[],
         rotations_per_level=3,
         instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie.",
-        score_color=(90,200,255), 
+        
         hits_required=15
     ),
     4: LevelCfg(4,
@@ -404,7 +395,6 @@ LEVELS: Dict[int, LevelCfg] = {
         rotations_per_level=3,
         instruction="Level 4 — Mix\nReguly + rotacje.",
         instruction_sec=5.0,  
-        score_color=(255,170,80),
         hits_required=15
     ),
     5: LevelCfg(5,
@@ -412,7 +402,7 @@ LEVELS: Dict[int, LevelCfg] = {
         rotations_per_level=1,
         memory_mode=True, memory_intro_sec=3.0,
         instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną.",
-        score_color=(180,120,255),  
+        
         hits_required=15
     ),
 }
@@ -847,6 +837,7 @@ class EffectsManager:
 
         # pulses
         self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0), 'timer': (0.0, 0.0) }
+        self._ring_pulses: dict[str, tuple[float, float]] = {}
 
         # exit slide (po poprawnej odpowiedzi)
         self.exit_active = False
@@ -911,6 +902,24 @@ class EffectsManager:
     def trigger_pulse_symbol(self): self.trigger_pulse('symbol')
     def trigger_pulse_streak(self): self.trigger_pulse('streak')
     def trigger_pulse_banner(self): self.trigger_pulse('banner')
+
+        # --- Ring icon pulse (per pozycja) ---
+    def trigger_pulse_ring(self, key: str, duration: float | None = None):
+        if not key:
+            return
+        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get('streak', PULSE_BASE_DURATION))
+        now = self.now()
+        self._ring_pulses[key] = (now, now + max(1e-3, dur))
+
+    def ring_pulse_scale(self, key: str) -> float:
+        st, en = self._ring_pulses.get(key, (0.0, 0.0))
+        if st <= 0.0 or self.now() >= en:
+            return 1.0
+        dur = max(1e-6, en - st)
+        t = (self.now() - st) / dur
+        # delikatny, czytelny pulse
+        local_max = 1.14  # ~+14% skali
+        return 1.0 + (local_max - 1.0) * math.sin(math.pi * max(0.0, min(1.0, t)))
 
     # -------- queries / math --------
     def _pulse_curve01(self, t: float, kind: str) -> float:
@@ -1201,12 +1210,17 @@ class InputRing:
             active_layout = layout if layout is not None else g.ring_layout
             for pos, (ix, iy) in pos_xy.items():
                 name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
-                rect = pygame.Rect(0, 0, icon_size, icon_size)
+                scale = self.g.fx.ring_pulse_scale(pos)
+                size  = max(1, int(icon_size * scale))
+                rect  = pygame.Rect(0, 0, size, size)
+
                 # map to 'out' surface space
                 ox = C + (ix - cx)
                 oy = C + (iy - cy)
                 rect.center = (ox, oy)
+
                 self.g.draw_symbol(out, name, rect)
+
 
         # apply additional gameplay rotation (layout transition) if any
         if abs(spin_deg) > 0.0001:
@@ -1316,8 +1330,10 @@ class Game:
         self.levels_active = LEVELS_ACTIVE_FOR_NOW
 
         self.score = 0
-        self.lives = MAX_LIVES
         self.streak = 0
+        self.best_streak = 0 
+        self.final_total = 0
+        self.lives = MAX_LIVES
 
         self.target: Optional[str] = None
         self.target_deadline: Optional[float] = None
@@ -1420,12 +1436,17 @@ class Game:
 
     def end_game(self) -> None:
         self.scene = Scene.OVER
-        if self.score > self.highscore:
-            self.highscore = self.score
+
+        # total = końcowy wynik (score + best_streak)
+        self.final_total = int(max(0, self.score) + max(0, self.best_streak))
+        if self.final_total > self.highscore:
+            self.highscore = self.final_total
             CFG["highscore"] = int(self.highscore)
             save_config({"highscore": CFG["highscore"]})
+
         if self.music_ok:
             pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
+
 
     # ---- Czas i proste utilsy ----
 
@@ -1765,15 +1786,6 @@ class Game:
                         # jeśli edytujesz aktualny level – zaktualizuj bieżący limit
                         if self.level == lid:
                             self.level_goal = L.hits_required
-                    elif key.endswith("_color"):
-                        # cyklicznie po palecie
-                        idx = 0
-                        try:
-                            idx = next(i for i,c in enumerate(LEVEL_COLOR_CHOICES) if c == L.score_color)
-                        except StopIteration:
-                            idx = 0
-                        idx = (idx + delta) % len(LEVEL_COLOR_CHOICES)
-                        L.score_color = LEVEL_COLOR_CHOICES[idx]
                 return
             except Exception:
                 return
@@ -1866,6 +1878,8 @@ class Game:
         self.level_goal = LEVELS[1].hits_required
         self.score = 0
         self.streak = 0
+        self.best_streak = 0 
+        self.final_total = 0
         self.lives = int(self.settings.get("lives", MAX_LIVES))
         self.rules.install([])
         self.target = None
@@ -2061,9 +2075,19 @@ class Game:
         required = self.rules.apply(self.target)
         if name == required:
             # --- DOBRA ODPOWIEDŹ ---
-            self.score += 1
             self.streak += 1
+            if self.streak > self.best_streak:
+                self.best_streak = self.streak
+            self.score += 1
+
+            # pulse
             self.fx.trigger_pulse('score')
+            try:
+                hit_pos = next(p for p, s in self.ring_layout.items() if s == required)
+                self.fx.trigger_pulse_ring(hit_pos)
+            except StopIteration:
+                pass
+
             if self.sfx.get("point"): self.sfx["point"].play()
             if self.streak and self.streak % 10 == 0:
                 self.fx.trigger_pulse_streak()
@@ -2759,7 +2783,7 @@ class Game:
         label_surf = self.draw_text("SCORE", color=SCORE_LABEL_COLOR, font=self.score_label_font, shadow=True)
         raw_val = self.draw_text(
             str(self.score),
-            color=self.level_cfg.score_color,
+            color=SCORE_VALUE_COLOR,
             font=self.score_value_font,
             shadow=True,
             scale=self.fx.pulse_scale('score'),
@@ -3049,26 +3073,54 @@ class Game:
                 self.draw_text(hf, hint, (self.w/2 - hw/2, self.h - bottom_gap - hh//4), color=(210, 220, 235))
 
             elif self.scene is Scene.OVER:
-                over_title_off = self.px(OVER_TITLE_OFFSET_Y)
-                score_gap1     = self.px(OVER_SCORE_GAP1)
-                score_gap2     = self.px(OVER_SCORE_GAP2)
-                over_info_gap  = self.px(OVER_INFO_GAP)
-
+                # Minimalny ekran końcowy: TOTAL + formuła + opcjonalny badge
                 self._blit_bg()
-                over_text = "GAME OVER"
-                ow, oh = self.big.size(over_text)
-                self.draw_text(self.big, over_text, (self.w/2 - ow/2, self.h/2 - oh/2 + over_title_off))
+                cx, cy = self.w // 2, self.h // 2
 
-                score_text = f"Score: {self.score}"
-                best_text  = f"Best:  {self.highscore}"
-                sw, sh = self.mid.size(score_text)
-                bw, bh = self.mid.size(best_text)
-                self.draw_text(self.mid, score_text, (self.w/2 - sw/2, self.h/2 - sh/2 + score_gap1), color=ACCENT)
-                self.draw_text(self.mid, best_text, (self.w/2 - bw/2, self.h/2 - bh/2 + score_gap2), color=ACCENT)
+                # 1) TOTAL (duży)
+                total_val = max(0, int(self.final_total or (self.score + self.streak)))
+                total_surf = self.draw_text(
+                    str(total_val),
+                    color=SCORE_VALUE_COLOR,
+                    font=self.score_value_font,
+                    shadow=True,
+                    glitch=False,
+                    scale=1.15
+                )
+                self.screen.blit(
+                    total_surf,
+                    (cx - total_surf.get_width() // 2, cy - total_surf.get_height() // 2)
+                )
 
+                # 2) Formuła pod spodem (czytelna, ale mniejsza)
+                formula = f"{self.score} + {self.best_streak} streak"
+                fw, fh = self.mid.size(formula)
+                self.draw_text(
+                    self.mid, formula,
+                    (cx - fw // 2, cy + total_surf.get_height() // 2 + self.px(8)),
+                    color=ACCENT, shadow=True, glitch=False
+                )
+
+                # 3) Badge NEW BEST! jeśli pobity rekord
+                if total_val >= self.highscore:
+                    badge = "NEW BEST!"
+                    bx = cx - self.font.size(badge)[0] // 2
+                    by = cy - total_surf.get_height() // 2 - self.px(18)
+                    self.draw_chip(
+                        badge, bx - self.px(12), by - self.px(6),
+                        pad=self.px(8), radius=self.px(10),
+                        bg=(22, 26, 34, 160), border=(120, 200, 255, 200),
+                        text_color=INK, font=self.font
+                    )
+
+                # 4) Delikatna podpowiedź na dole
                 info_text = "SPACE = play again   ·   ESC = quit"
                 iw, ih = self.font.size(info_text)
-                self.draw_text(self.font, info_text, (self.w/2 - iw/2, self.h/2 + over_info_gap))
+                self.draw_text(
+                    self.font, info_text,
+                    (cx - iw // 2, self.h - ih - self.px(24)),
+                    color=(210, 220, 235), shadow=True, glitch=False
+                )
 
             elif self.scene is Scene.SETTINGS:
                 self._blit_bg()
