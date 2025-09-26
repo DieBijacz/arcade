@@ -96,6 +96,8 @@ LEVEL_COLOR_CHOICES: List[Tuple[int,int,int]] = [
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
 GAP = 0.04                       # przerwa między obiektami w siatce
 FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
+TEXT_SHADOW_OFFSET = (2, 2)
+UI_RADIUS = 8
 
 # --- Levels --- (progresja poziomów)
 LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
@@ -121,9 +123,6 @@ SYMBOL_ANIM_OFFSET_Y = 0.08       # startowe przesunięcie w dół (proporcja wy
 SHAKE_DURATION = 0.12             # długość wstrząsu
 SHAKE_AMPLITUDE_FACT = 0.012      # amplituda (proporcja szerokości okna)
 SHAKE_FREQ_HZ = 18.0              # częstotliwość drgań
-
-# Ogólne zaokrąglenie rogów UI
-UI_RADIUS = 8
 
 # Parametry rysowania symboli wektorowych (fallback)
 SYMBOL_DRAW_THICKNESS = 20        # grubość linii
@@ -1259,11 +1258,10 @@ class TimeBar:
         # podpis nad paskiem
         if label:
             timer_font = getattr(g, "timer_font", g.mid)
-            lw, lh = timer_font.size(label)
-            tx = bar_x + (bar_w - lw) // 2
-            ty = bar_y - lh - TIMER_LABEL_GAP
-            g.screen.blit(timer_font.render(label, True, (0, 0, 0)), (tx + 2, ty + 2))
-            g.screen.blit(timer_font.render(label, True, TIMER_BAR_TEXT_COLOR), (tx, ty))
+            t = g.draw_text(label, color=TIMER_BAR_TEXT_COLOR, font=timer_font, shadow=True, glitch=False)
+            tx = bar_x + (bar_w - t.get_width()) // 2
+            ty = bar_y - t.get_height() - TIMER_LABEL_GAP
+            g.screen.blit(t, (tx, ty))
 
 # ========= GAME =========
 class Game:
@@ -2240,13 +2238,87 @@ class Game:
         sh.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         return sh
 
-    def draw_text(self, font, text, pos, color=INK, shadow=True):
-        render_text = self._glitch_text(text) if self.fx.is_text_glitch_active() else text
+    def draw_text(
+        self,
+        *args,
+        **kwargs
+    ) -> pygame.Surface:
+        # --- Rozpoznanie wariantu wywołania ---
+        if args and not isinstance(args[0], str):
+            # LEGACY: (font, text, pos, ...)
+            font = args[0]
+            text = args[1] if len(args) > 1 else ""
+            pos  = args[2] if len(args) > 2 else None
+            color = kwargs.get("color", INK)
+            shadow = kwargs.get("shadow", True)
+            glitch = kwargs.get("glitch", True)
+            scale = kwargs.get("scale", 1.0)
+            alpha = kwargs.get("alpha", None)
+            shadow_offset = kwargs.get("shadow_offset", None)
+            size_px = None
+        else:
+            # NOWY: (text, ...)
+            text = args[0] if args else ""
+            pos  = kwargs.get("pos", None)
+            color = kwargs.get("color", INK)
+            font = kwargs.get("font", None)
+            size_px = kwargs.get("size_px", None)
+            shadow = kwargs.get("shadow", True)
+            glitch = kwargs.get("glitch", True)
+            scale = kwargs.get("scale", 1.0)
+            alpha = kwargs.get("alpha", None)
+            shadow_offset = kwargs.get("shadow_offset", None)
+
+        # --- Render ---
+        fnt = font
+        if fnt is None:
+            px = self.px(size_px) if size_px else self.font.get_height()
+            fnt = pygame.font.Font(FONT_PATH, max(8, int(px)))
+
+        def _glitch_text(s: str) -> str:
+            if glitch and self.fx.is_text_glitch_active():
+                out = []
+                for ch in s:
+                    if ch.isspace():
+                        out.append(ch)
+                    elif random.random() < TEXT_GLITCH_CHAR_PROB:
+                        out.append(random.choice(TEXT_GLITCH_CHARSET))
+                    else:
+                        out.append(ch)
+                return "".join(out)
+            return s
+
+        render_text = _glitch_text(text)
+        base = fnt.render(render_text, True, color)
+
+        if scale != 1.0:
+            bw, bh = base.get_size()
+            base = pygame.transform.smoothscale(base, (max(1, int(bw*scale)), max(1, int(bh*scale))))
+
         if shadow:
-            shadow_surf = font.render(render_text, True, (0, 0, 0))
-            self.screen.blit(shadow_surf, (pos[0] + 2, pos[1] + 2))
-        txt_surf = font.render(render_text, True, color)
-        self.screen.blit(txt_surf, pos)
+            dx, dy = (shadow_offset or TEXT_SHADOW_OFFSET)
+            sh = pygame.Surface(base.get_size(), pygame.SRCALPHA)
+            sh.blit(base, (0, 0))
+            tint = pygame.Surface(base.get_size(), pygame.SRCALPHA)
+            tint.fill((0, 0, 0, 255))
+            sh.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+            out_w = base.get_width() + max(0, dx)
+            out_h = base.get_height() + max(0, dy)
+            surf = pygame.Surface((out_w, out_h), pygame.SRCALPHA)
+            surf.blit(sh, (dx, dy))
+            surf.blit(base, (0, 0))
+        else:
+            surf = base
+
+        if alpha is not None:
+            surf.set_alpha(alpha)
+
+        # --- Opcjonalny blit ---
+        if pos is not None:
+            self.screen.blit(surf, pos)
+
+        return surf
 
     def draw_chip(
         self,
@@ -2446,76 +2518,54 @@ class Game:
         sym.draw(surface, rect, images=self.images, cfg=self.cfg)
 
     def _draw_label_value_vstack(self, *, label: str, value: str, left: bool, anchor_rect: pygame.Rect) -> None:
-        label_surf = self.hud_label_font.render(label, True, HUD_LABEL_COLOR)
-        value_surf = self.hud_value_font.render(value, True, HUD_VALUE_COLOR)
-        total_h = label_surf.get_height() + 2 + value_surf.get_height()
+        lab = self.draw_text(label,  color=HUD_LABEL_COLOR, font=self.hud_label_font, shadow=True)
+        val = self.draw_text(value,  color=HUD_VALUE_COLOR, font=self.hud_value_font, shadow=True)
+
+        total_h = lab.get_height() + 2 + val.get_height()
         y = anchor_rect.centery - total_h // 2
         if left:
             lx = vx = anchor_rect.left
         else:
-            lx = anchor_rect.right - label_surf.get_width()
-            vx = anchor_rect.right - value_surf.get_width()
+            lx = anchor_rect.right - lab.get_width()
+            vx = anchor_rect.right - val.get_width()
 
-        # shadow
-        self.screen.blit(label_surf, (lx + 1, y + 1))
-        self.screen.blit(value_surf, (vx + 2, y + label_surf.get_height() + 3))
-        # main text
-        self.screen.blit(label_surf, (lx, y))
-        self.screen.blit(value_surf, (vx, y + label_surf.get_height() + 2))
+        self.screen.blit(lab, (lx, y))
+        self.screen.blit(val, (vx, y + lab.get_height() + 2))
 
     def _draw_label_value_vstack_center(
-        self,
-        *,
-        label: str,
-        value: str,
-        anchor_rect: pygame.Rect,
+        self, *, label: str, value: str, anchor_rect: pygame.Rect,
         label_color: Tuple[int,int,int] = HUD_LABEL_COLOR,
         value_color: Tuple[int,int,int] = HUD_VALUE_COLOR,
     ) -> None:
-        label_surf = self.hud_label_font.render(label, True, label_color)
-        value_surf = self.hud_value_font.render(value, True, value_color)
+        lab = self.draw_text(label, color=label_color, font=self.hud_label_font, shadow=True)
+        val = self.draw_text(value, color=value_color, font=self.hud_value_font, shadow=True)
+
         gap = 2
-        total_h = label_surf.get_height() + gap + value_surf.get_height()
+        total_h = lab.get_height() + gap + val.get_height()
+        y  = anchor_rect.centery - total_h // 2
+        lx = anchor_rect.centerx - lab.get_width() // 2
+        vx = anchor_rect.centerx - val.get_width() // 2
 
-        y = anchor_rect.centery - total_h // 2
-        lx = anchor_rect.centerx - label_surf.get_width() // 2
-        vx = anchor_rect.centerx - value_surf.get_width() // 2
-
-        # lekki cień
-        self.screen.blit(label_surf, (lx + 1, y + 1))
-        self.screen.blit(value_surf, (vx + 2, y + label_surf.get_height() + 3))
-        # tekst
-        self.screen.blit(label_surf, (lx, y))
-        self.screen.blit(value_surf, (vx, y + label_surf.get_height() + gap))
+        self.screen.blit(lab, (lx, y))
+        self.screen.blit(val, (vx, y + lab.get_height() + gap))
 
     def _draw_settings_row(self, *, label: str, value: str, y: float, selected: bool) -> float:
         font = self.settings_font
         axis_x = self.w // 2
-        gap = self.px(SETTINGS_CENTER_GAP) 
+        gap = self.px(SETTINGS_CENTER_GAP)
 
-        col_label = ACCENT if selected else INK
-        col_value = ACCENT if selected else INK
+        col = ACCENT if selected else INK
+        lab = self.draw_text(label, color=col, font=font, shadow=True, glitch=False)
+        val = self.draw_text(value, color=col, font=font, shadow=True, glitch=False)
 
-        label_surf = font.render(label, True, col_label)   # <-- was missing
-        value_surf = font.render(value, True, col_value)
-
-        lh = label_surf.get_height()
-        vh = value_surf.get_height()
-        row_h = max(lh, vh)
-
-        label_x = axis_x - gap - label_surf.get_width()
-        label_y = y + (row_h - lh) / 2
-
+        row_h = max(lab.get_height(), val.get_height())
+        label_x = axis_x - gap - lab.get_width()
+        label_y = y + (row_h - lab.get_height()) / 2
         value_x = axis_x + gap
-        value_y = y + (row_h - vh) / 2
+        value_y = y + (row_h - val.get_height()) / 2
 
-        # subtle shadow + text
-        self.screen.blit(self._shadow_text(label_surf), (label_x + 2, label_y + 2))
-        self.screen.blit(label_surf, (label_x, label_y))
-
-        self.screen.blit(self._shadow_text(value_surf), (value_x + 2, value_y + 2))
-        self.screen.blit(value_surf, (value_x, value_y))
-
+        self.screen.blit(lab, (label_x, label_y))
+        self.screen.blit(val, (value_x, value_y))
         return row_h
 
     def _render_rule_panel_surface(
@@ -2707,29 +2757,16 @@ class Game:
         )
 
         # === STREAK z pulsem na wartości ===
-        streak_label = "STREAK"
-        streak_value = str(self.streak)
+        lab = self.draw_text("STREAK", color=HUD_LABEL_COLOR, font=self.hud_label_font, shadow=True)
+        label_x = left_block.centerx - lab.get_width() // 2
+        label_y = left_block.centery - lab.get_height() - 2
+        self.screen.blit(lab, (label_x, label_y))
 
-        # etykieta (bez skali)
-        label_surf = self.hud_label_font.render(streak_label, True, HUD_LABEL_COLOR)
-        label_x = left_block.centerx - label_surf.get_width() // 2
-        label_y = left_block.centery - label_surf.get_height() - 2
-        # cień + tekst
-        self.screen.blit(label_surf, (label_x + 1, label_y + 1))
-        self.screen.blit(label_surf, (label_x, label_y))
-
-        # wartość – render i ewentualne skalowanie (pulse)
-        value_surf = self.hud_value_font.render(streak_value, True, HUD_VALUE_COLOR)
         scale = self.fx.pulse_scale('streak')
-        if scale != 1.0:
-            vw, vh = value_surf.get_size()
-            sw, sh = max(1, int(vw * scale)), max(1, int(vh * scale))
-            value_surf = pygame.transform.smoothscale(value_surf, (sw, sh))
-
-        vx = left_block.centerx - value_surf.get_width() // 2
-        vy = label_y + label_surf.get_height() + 2
-        self.screen.blit(self._shadow_text(value_surf), (vx + 2, vy + 2))
-        self.screen.blit(value_surf, (vx, vy))
+        val = self.draw_text(str(self.streak), color=HUD_VALUE_COLOR, font=self.hud_value_font, shadow=True, scale=scale)
+        vx = left_block.centerx - val.get_width() // 2
+        vy = label_y + lab.get_height() + 2
+        self.screen.blit(val, (vx, vy))
 
         # HIGHSCORE po prawej (bez zmian)
         hs_label_color = (255, 230, 140) if self.score > self.highscore else HUD_LABEL_COLOR
@@ -2737,8 +2774,8 @@ class Game:
             label="HIGHSCORE",
             value=str(self.highscore),
             anchor_rect=right_block,
-            label_color=hs_label_color,          # tylko etykieta na złoto po pobiciu HS
-            value_color=HUD_VALUE_COLOR,         # liczba bez zmian
+            label_color=hs_label_color,          
+            value_color=HUD_VALUE_COLOR,         
         )
 
         # --- kapsuła SCORE ---
@@ -2749,33 +2786,26 @@ class Game:
             self.screen, cap, SCORE_CAPSULE_BG,
             border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
         )
-        label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
-        raw_value_surf = self.score_value_font.render(str(self.score), True, self.level_cfg.score_color)
+        label_surf = self.draw_text("SCORE", color=SCORE_LABEL_COLOR, font=self.score_label_font, shadow=True)
+        raw_val = self.draw_text(
+            str(self.score),
+            color=self.level_cfg.score_color,
+            font=self.score_value_font,
+            shadow=True,
+            scale=self.fx.pulse_scale('score'),
+        )
 
         gap = 2
-
-        # przygotuj skalowaną wartość (pulse na 'score')
-        scale = self.fx.pulse_scale('score')
-        if scale != 1.0:
-            vw, vh = raw_value_surf.get_size()
-            sw, sh = max(1, int(vw * scale)), max(1, int(vh * scale))
-            value_surf = pygame.transform.smoothscale(raw_value_surf, (sw, sh))
-        else:
-            value_surf = raw_value_surf
-
-        total_h = label_surf.get_height() + gap + value_surf.get_height()
+        total_h = label_surf.get_height() + gap + raw_val.get_height()
 
         lx = cap.centerx - label_surf.get_width() // 2
         ly = cap.centery - total_h // 2
 
-        vx = cap.centerx - value_surf.get_width() // 2
+        vx = cap.centerx - raw_val.get_width() // 2
         vy = ly + label_surf.get_height() + gap
 
-        # subtelny cień + tekst
-        self.screen.blit(label_surf, (lx + 1, ly + 1))
-        self.screen.blit(value_surf, (vx + 1, vy + 1))
         self.screen.blit(label_surf, (lx, ly))
-        self.screen.blit(value_surf, (vx, vy))
+        self.screen.blit(raw_val, (vx, vy))
 
         # docelowe Y dla dockowania bannera: poniżej kapsuły SCORE
         margin = self.px(RULE_BANNER_PINNED_MARGIN)
