@@ -204,8 +204,8 @@ RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
 RULE_BANNER_MIN_W_FACTOR = 0.90   # minimalna szerokość panelu względem ekranu
 
 # --- Memory (ring hide conditions) ---
-MEMORY_HIDE_AFTER_MOVES = 4      # po ilu ruchach znikają ikony
-MEMORY_HIDE_AFTER_SEC   = 5.0    # po ilu sekundach znikają ikony
+MEMORY_HIDE_AFTER_MOVES = 1      # po ilu ruchach znikają ikony
+MEMORY_HIDE_AFTER_SEC   = 3.0    # po ilu sekundach znikają ikony
 
 # --- Input Ring (wokół symbolu celu)
 RING_RADIUS_FACTOR = 1           # promień ringu jako ułamek rozmiaru docelowego symbolu
@@ -728,89 +728,71 @@ class TutorialPlayer:
                 tw, th = g.mid.size(self.caption)
                 g.draw_text(g.mid, self.caption, (g.w/2 - tw/2, y), color=ACCENT)
 
-def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer']:
-    SYM = lambda: random.choice(SYMS)
+def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
+    """Buduje tutorial na podstawie *aktualnej* konfiguracji levelu (modyfikatorów)."""
+    L = g.level_cfg
 
-    # === LEVEL 1 — Classic (3 scenki, wolniejsza animacja) ===
-    if level == 1:
-        # trzy różne symbole, każdy rusza po 1.0s, jedzie do „swojego” miejsca
-        items = [
-            DemoItem(at=0.0, symbol="SQUARE",   slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
-            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
-            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60, tail_sec=0.20),
-        ]
-        cap = f"Match symbol"
-        return TutorialPlayer(g, items, caption=cap, mapping_pair=None, show_mapping_banner=False, sequential=True, seq_gap=0.12)
+    # Aktywne „cechy” poziomu
+    has_remap   = any(s.type is RuleType.MAPPING for s in (L.rules or []))
+    has_rotate  = getattr(L, "rotations_per_level", 0) > 0
+    has_memory  = bool(getattr(L, "memory_mode", False))
+    has_invert  = bool(getattr(L, "control_flip_lr_ud", False))
 
-    # === LEVEL 2 — Mapping A⇒B (baner + 3 scenki) ===
-    if level == 2:
-        # losujemy mapping i pokazujemy baner (in→hold→dock)
+    # Podpis pod tytułem – złożony z aktywnych cech (np. "Remap + rotate")
+    parts = []
+    if has_remap:  parts.append("Remap")
+    if has_rotate: parts.append("Rotate")
+    if has_memory: parts.append("Memory")
+    if has_invert: parts.append("Controls flipped")
+    caption = " + ".join(parts) if parts else "Classic"
+
+    # Helper do losowania symboli
+    def SYM(exclude: set[str] = set()) -> str:
+        import random
+        choices = [s for s in SYMS if s not in exclude]
+        return random.choice(choices) if choices else random.choice(SYMS)
+
+    items: list[DemoItem] = []
+    mapping_pair: Optional[tuple[str, str]] = None
+
+    # Jeżeli jest remap – pokaż baner i 2× symbol A kierowany do B + 1 neutralny
+    if has_remap:
         a = SYM()
-        b = random.choice([s for s in SYMS if s != a])
-        neutral = random.choice([s for s in SYMS if s not in (a, b)])
-
-        items = [
-            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
-            DemoItem(at=0.0,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False),
-            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
+        b = SYM({a})
+        mapping_pair = (a, b)
+        neutral = SYM({a, b})
+        items += [
+            DemoItem(at=0.0, symbol=a,       slide_delay=1.0, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
+            DemoItem(at=0.0, symbol=neutral, slide_delay=1.0, slide_duration=0.60, use_mapping=False, rotate_ring=False),
+            DemoItem(at=0.0, symbol=a,       slide_delay=1.0, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
         ]
-        cap = f"Follow remap"
-        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True, static_banner=True)
-
-    # === LEVEL 3 — Rotacje (3 scenki + dwie rotacje wizualne) ===
-    if level == 3:
-        items = [
-            DemoItem(at=0.0,  symbol="CROSS",   slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=0.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=0.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
+    else:
+        # Bez remapu – trzy różne symbole do „siebie”
+        x = SYM(); y = SYM({x}); z = SYM({x, y})
+        items += [
+            DemoItem(at=0.0, symbol=x, slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0, symbol=y, slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0, symbol=z, slide_delay=1.0, slide_duration=0.60),
         ]
-        cap = f"Ring rotates"
-        return TutorialPlayer(g, items, caption=cap)
 
-    # === LEVEL 4 — Mix (rotacje + mapping; baner + 3 scenki) ===
-    if level == 4:
-        a = SYM()
-        b = random.choice([s for s in SYMS if s != a])
-        neutral = random.choice([s for s in SYMS if s not in (a, b)])
-        items = [
-            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True, rotate_ring=True),
-            DemoItem(at=0.0,  symbol=neutral,  slide_delay=1.0, slide_duration=0.60, use_mapping=False, rotate_ring=True),
-            DemoItem(at=0.0,  symbol=a,        slide_delay=1.0, slide_duration=0.60, use_mapping=True),
-        ]
-        cap = f"Remap + rotate"
-        return TutorialPlayer(g, items, caption=cap, mapping_pair=(a, b), show_mapping_banner=True, static_banner=True)
+    # Jeżeli są rotacje – zaznacz obrót przy pierwszych dwóch scenkach (dokładnie jak w Twoim starym L3/L4)
+    if has_rotate and len(items) >= 2:
+        items[0].rotate_ring = True
+        items[1].rotate_ring = True
 
-    # === LEVEL 5 — Memory (3 scenki, bez HUD; tylko idea) ===
-    if level == 5:
-        items = [
-            DemoItem(at=0.0,  symbol="TRIANGLE",slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=0.0,  symbol="CIRCLE",  slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=0.0,  symbol="SQUARE",  slide_delay=1.0, slide_duration=0.60),
-        ]
-        cap = f"Memorize layout"
-        return TutorialPlayer(g, items, caption=cap)
+    # Memory: samo wyświetlenie captionu wystarcza (mechanika chowania ikon już jest w kodzie gry).
+    # Invert: dopisaliśmy do captionu, sterowanie działa z pól levelu.
 
-        # === LEVEL 6 — Memory + Rotacje ===
-    if level == 6:
-        items = [
-            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
-            DemoItem(at=0.0, symbol="SQUARE",   slide_delay=1.0, slide_duration=0.60),
-        ]
-        cap = "Memorize + ring rotates"
-        return TutorialPlayer(g, items, caption=cap)
-
-    # === LEVEL 7 — Odwrócone sterowanie ===
-    if level == 7:
-        items = [
-            DemoItem(at=0.0, symbol="CROSS",    slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60),
-            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60),
-        ]
-        cap = "Controls flipped (←↔→, ↑↔↓)"
-        return TutorialPlayer(g, items, caption=cap)
-
-    return None
+    # Baner remapu pokazujemy jako statyczny (czytelny na ekranie instrukcji)
+    return TutorialPlayer(
+        g, items,
+        caption=caption,
+        mapping_pair=mapping_pair,
+        show_mapping_banner=bool(mapping_pair),
+        static_banner=True,     # przypięty, bez animacji IN/HOLD/OUT
+        sequential=True,
+        seq_gap=0.12,
+    )
 
 # ========= RULE MANAGER =========
 class RuleManager:
@@ -1445,6 +1427,8 @@ class Game:
         self.memory_intro_until = 0.0   # (stare – nie użyjemy już do ukrywania)
         self.memory_hide_deadline = 0.0 # nowy: kiedy najpóźniej ukryć ikony (czasowo)
         self.memory_moves_count = 0     # nowy: ile ruchów wykonano zanim znikną
+        self.memory_preview_armed = False   # czekaj na „sygnał” (np. koniec bannera), by wystartować odliczanie
+        self._banner_was_active = False     # detekcja zbocza: koniec animacji bannera
 
         # klawisze mapują do POZYCJI; symbole wynikają z ring_layout
         self.key_to_pos = {
@@ -1575,6 +1559,16 @@ class Game:
             w, h = surf.get_size()
             return (max(1, int(w * scale)), max(1, int(h * scale)))
         return surf.get_size()
+
+    def _memory_start_preview(self, *, reset_moves: bool = True, force_unhide: bool = False) -> None:
+        if not self.level_cfg.memory_mode:
+            return
+        if force_unhide:
+            self.memory_show_icons = True
+        if reset_moves:
+            self.memory_moves_count = 0
+        self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
+        self.memory_preview_armed = False
 
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
@@ -1931,12 +1925,23 @@ class Game:
         )
         save_config(payload)
 
-        if self.music_ok:
-            pygame.mixer.music.set_volume(float(CFG["audio"]["music_volume"]))
-        for sfx in getattr(self, "sfx", {}).values():
-            sfx.set_volume(float(CFG["audio"]["sfx_volume"]))
+        def _deep_merge(dst, src):
+            for k, v in src.items():
+                if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                    _deep_merge(dst[k], v)
+                else:
+                    dst[k] = v
+        _deep_merge(CFG, payload)
 
-        self._set_display_mode(bool(CFG["display"]["fullscreen"]))
+        apply_levels_from_cfg(CFG)
+
+        # reszta jak była
+        if self.music_ok:
+            pygame.mixer.music.set_volume(float(self.settings.get("music_volume", CFG["audio"]["music_volume"])))
+        for sfx in getattr(self, "sfx", {}).values():
+            sfx.set_volume(float(self.settings.get("sfx_volume", CFG["audio"]["sfx_volume"])))
+
+        self._set_display_mode(bool(self.settings.get("fullscreen", CFG["display"]["fullscreen"])))
         self._rebuild_fonts()
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
@@ -2042,7 +2047,7 @@ class Game:
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
-        self.tutorial = build_tutorial_for_level(self, lvl)
+        self.tutorial = build_tutorial_for_level(self)
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
@@ -2083,12 +2088,13 @@ class Game:
     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
         now = self.now()
         self.banner.start(now, from_pinned=from_pinned)
-        # pauza wejścia i czasu reakcji
         self.pause_start = now
         self.pause_until = self.banner.active_until
-        # w TIMED dodajemy bonus tylko gdy baner rzeczywiście się pokazuje
         if self.mode is Mode.TIMED:
             self.time_left += ADDITIONAL_RULE_TIME 
+        if self.level_cfg.memory_mode:
+            self.memory_preview_armed = True
+            self.memory_hide_deadline = 0.0
 
     def _enter_gameplay_after_instruction(self) -> None:
         self.scene = Scene.GAME
@@ -2096,11 +2102,11 @@ class Game:
         if self.mode is Mode.TIMED:
             self._last_tick = self.now()
 
-        # memory – okno podglądu po wejściu do GAME
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
             self.memory_moves_count = 0
-            self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
+            self.memory_hide_deadline = 0.0   
+            self.memory_preview_armed = True
 
         # 1) Zainstaluj reguły DLA TEGO levelu (czyści poprzednie)
         self.rules.install(self.level_cfg.rules)
@@ -2111,6 +2117,9 @@ class Game:
         if mapping_spec:
             self.rules.roll_mapping(SYMS)
             self._start_mapping_banner(from_pinned=False)
+        else:
+            if self.level_cfg.memory_mode and self.memory_preview_armed:
+                self._memory_start_preview(reset_moves=False, force_unhide=False)
 
         # 3) Nowy target na start rozgrywki
         self.new_target()
@@ -2160,6 +2169,10 @@ class Game:
                     self.start_game(); return
 
             elif self.scene is Scene.SETTINGS:
+                if event.key == pygame.K_RETURN:
+                    self.settings_save()
+                    return
+
                 # ←/→ – w LIŚCIE: zmiana wartości; w TABELI: edycja aktywnej komórki
                 if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
                     delta = -1 if event.key == pygame.K_LEFT else +1
@@ -2323,6 +2336,13 @@ class Game:
         now = self.now()
         self.fx.maybe_schedule_text_glitch()
 
+        # --- REMAP banner: detekcja końca animacji (zbocze opadające) ---
+        banner_active = self.banner.is_active(now)
+        if self._banner_was_active and not banner_active:
+            if self.level_cfg.memory_mode and self.memory_preview_armed:
+                self._memory_start_preview(reset_moves=False, force_unhide=False)
+        self._banner_was_active = banner_active
+
         # debounce
         if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
             self.lock_until_all_released = False
@@ -2348,7 +2368,7 @@ class Game:
             _ = iq.pop_all()
             return
         
-        if self.banner.is_active(now):
+        if banner_active:
             _ = iq.pop_all()
             # nie licz upływu czasu w TIMED, „zamrażamy” też timeout targetu
             self._last_tick = now
@@ -2408,7 +2428,7 @@ class Game:
 
         # MEMORY: ukryj ikony po czasie (jeśli jeszcze są widoczne)
         if self.level_cfg.memory_mode and self.memory_show_icons:
-            if now >= self.memory_hide_deadline:
+            if self.memory_hide_deadline > 0.0 and now >= self.memory_hide_deadline:
                 self.memory_show_icons = False
 
         self._cleanup_exit_slide_if_ready()
@@ -2547,15 +2567,29 @@ class Game:
         raw_h = self._levels_table_height()
         scale = float(scale_override) if scale_override is not None else 1.0
 
+        cols = ["LEVEL", "POINTS", "MODIFIER 1", "MODIFIER 2", "MODIFIER 3"]
+
         def S(v: int) -> int:
+            # używamy obliczonego 'scale', nie scale_override bezpośrednio
             return max(1, int(self.px(v) * scale))
 
-        cols  = ["LEVEL", "Points required", "modifier 1", "modifier 2", "modifier 3"]
-        col_w = [S(90), S(200), S(170), S(170), S(170)]
-        table_w = sum(col_w)
-        x0 = (self.w - table_w) // 2
+        base_col_w = [S(90), S(120), S(170), S(170), S(170)]
+        base_table_w = sum(base_col_w)
 
-        y = top_y  
+        side_pad = int(self.w * 0.01)
+        avail_w = max(1, self.w - side_pad * 2)
+
+        k = avail_w / max(1, base_table_w)
+        col_w = [max(1, int(round(w * k))) for w in base_col_w]
+
+        delta = avail_w - sum(col_w)
+        col_w[-1] += delta  # ostatnia kolumna „bierze” różnicę
+
+        table_w = avail_w
+        x0 = side_pad
+
+        # --- tu brakowało inicjalizacji 'y'
+        y = top_y
 
         # header
         header_h = S(28)
@@ -2572,7 +2606,8 @@ class Game:
         row_h = S(32)
         for row in range(1, self.levels_active + 1):
             L = LEVELS.get(row)
-            if not L: continue
+            if not L:
+                continue
             rr = pygame.Rect(x0, y, table_w, row_h)
             self._draw_round_rect(self.screen, rr, (16,18,24,140), border=(40,60,90,140),
                                 border_w=1, radius=S(6))
@@ -2595,7 +2630,8 @@ class Game:
 
             # cols 2..4
             mods = (L.modifiers or [])[:]
-            while len(mods) < 3: mods.append("—")
+            while len(mods) < 3:
+                mods.append("—")
             for c in range(3):
                 cell = pygame.Rect(cx, y, col_w[2 + c], row_h)
                 tag = mods[c]
@@ -2603,7 +2639,7 @@ class Game:
                     self.draw_text("—", pos=(cell.x + S(12), cell.y + S(6)),
                                 color=(170,180,190), font=self.font, shadow=True, glitch=False, scale=scale)
                 else:
-                    col = MOD_COLOR.get("memory" if tag=="memory" else ("invert" if tag=="joystick" else tag), INK)
+                    col = MOD_COLOR.get("memory" if tag == "memory" else ("invert" if tag == "joystick" else tag), INK)
                     self._draw_mod_chip(tag, cell.x + S(8), cell.y + S(4), col, scale=scale)
                 self._level_table_cells[(row, 2 + c)] = cell
                 cx += col_w[2 + c]
@@ -2615,10 +2651,11 @@ class Game:
                                     sel.inflate(-2, -2), width=2, border_radius=S(6))
             y += row_h + S(6)
 
-        # legenda
+        # legenda — wycentrowana względem tabeli (z paddingiem), nie całego ekranu
         legend = "Legend: remap (magenta) · spin (gold) · memory (red) · inverted joystick (green)"
         lw, _ = self.font.size(legend)
-        self.draw_text(legend, pos=(self.w/2 - (lw * scale)/2, y + S(4)),
+        legend_x = x0 + max(0, (table_w - int(lw * scale)) // 2)
+        self.draw_text(legend, pos=(legend_x, y + S(4)),
                     color=(200,210,225), font=self.font, shadow=True, glitch=False, scale=scale)
 
     def _levels_table_height(self) -> int:
@@ -3170,6 +3207,9 @@ class Game:
             self._recompute_keymap()
             self.rot_anim["active"] = False
             self.rot_anim["swapped"] = True
+            # MEMORY + SPIN: po faktycznej zmianie układu pokaż go graczowi od nowa
+            if self.level_cfg.memory_mode:
+                self._memory_start_preview(reset_moves=True, force_unhide=True)
             return 0.0
         # ease-out dla przyjemnego hamowania
         p = self._ease_out_cubic(max(0.0, min(1.0, t)))
