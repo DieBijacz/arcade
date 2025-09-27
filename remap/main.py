@@ -96,7 +96,7 @@ UI_RADIUS = 8
 
 # --- Levels --- (progresja poziomów)
 LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
-LEVELS_ACTIVE_FOR_NOW = 5        # faktycznie używana liczba poziomów
+LEVELS_ACTIVE_FOR_NOW = 7        # faktycznie używana liczba poziomów
 
 # Tempo gry i tryby
 TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]  # startowy czas na reakcję (tryb SPEEDUP)
@@ -224,6 +224,13 @@ DEFAULT_RING_LAYOUT = {
     "BOTTOM": "CROSS",
 }
 
+MOD_COLOR = {
+    "remap":   (236, 72, 153),   # magenta
+    "spin":    (255, 210, 90),   # gold
+    "memory":  (220, 80, 80),    # red
+    "invert":  (90, 200, 120),   # green (inverted joystick)
+}
+
 RING_POSITIONS = ["TOP", "RIGHT", "LEFT", "BOTTOM"]
 
 RING_PALETTES = {
@@ -271,7 +278,7 @@ OVER_SCORE_GAP1 = -10                # przesunięcie pierwszej linii wyniku
 OVER_SCORE_GAP2 = 26                 # przesunięcie drugiej linii wyniku
 OVER_INFO_GAP = 60                   # odstęp do linii z instrukcją
 SETTINGS_TITLE_Y_FACTOR = 0.10       # pionowe położenie tytułu „Settings”
-SETTINGS_LIST_Y_START_FACTOR = 0.25  # start Y listy opcji
+SETTINGS_LIST_Y_START_FACTOR = 0.23  # start Y listy opcji
 SETTINGS_ITEM_SPACING = 3            # odstęp między wierszami listy
 SETTINGS_HELP_MARGIN_TOP = 18        # margines nad helpem na dole
 SETTINGS_HELP_GAP = 6                # odstęp między wierszami helpu
@@ -312,6 +319,9 @@ HUD_LABEL_COLOR = (180, 200, 230)   # kolor etykiet HUD
 HUD_VALUE_COLOR = INK               # kolor wartości HUD
 SCORE_LABEL_COLOR = ACCENT          # kolor napisu „SCORE”
 SCORE_VALUE_COLOR = INK             # kolor liczby punktów
+
+# --- Modifiers (UI table) ---
+MODIFIER_OPTIONS = ["—", "remap", "spin", "memory", "joystick"]  # "—" = none
 
 # --- Aspect --- (utrzymanie 9:16 w trybie okienkowym)
 ASPECT_RATIO = (9, 16)             # docelowe proporcje (portret)
@@ -370,6 +380,8 @@ class LevelCfg:
     instruction: str = ""                                   # krótki tekst instrukcji
     instruction_sec: float = 5.0                            # ile sekund trwa ekran instrukcji
     hits_required: int = LEVEL_GOAL_PER_LEVEL
+    control_flip_lr_ud: bool = False   
+    modifiers: List[str] = field(default_factory=list)   
 
 LEVELS: Dict[int, LevelCfg] = {
     1: LevelCfg(1,
@@ -405,6 +417,23 @@ LEVELS: Dict[int, LevelCfg] = {
         
         hits_required=15
     ),
+    6: LevelCfg(6,
+        rules=[],
+        rotations_per_level=3,                
+        memory_mode=True, memory_intro_sec=3.0,  
+        instruction="Level 6 — Memory + Rotacje\nZapamiętaj układ — ring będzie się obracał.",
+        instruction_sec=5.0,
+        hits_required=15
+    ),
+    7: LevelCfg(7,
+        rules=[],                              
+        rotations_per_level=0,
+        memory_mode=False,
+        control_flip_lr_ud=True,               
+        instruction="Level 7 — Odwrócone sterowanie\nLewo↔Prawo oraz Góra↔Dół są zamienione.",
+        instruction_sec=5.0,
+        hits_required=15
+    ),
 }
 
 def apply_levels_from_cfg(cfg: dict) -> None:
@@ -412,16 +441,35 @@ def apply_levels_from_cfg(cfg: dict) -> None:
     for k, v in lvl_cfg.items():
         try:
             lid = int(k)
-            if lid in LEVELS:
-                if isinstance(v, dict):
-                    if "hits" in v:
-                        LEVELS[lid].hits_required = int(max(1, min(999, v["hits"])))
-                    if "color" in v and isinstance(v["color"], (list, tuple)) and len(v["color"]) == 3:
-                        r,g,b = [int(max(0, min(255, c))) for c in v["color"]]
-                        LEVELS[lid].score_color = (r,g,b)
+            if lid in LEVELS and isinstance(v, dict):
+                L = LEVELS[lid]
+                if "hits" in v:
+                    L.hits_required = int(max(1, min(999, v["hits"])))
+                if "color" in v and isinstance(v["color"], (list, tuple)) and len(v["color"]) == 3:
+                    r,g,b = [int(max(0, min(255, c))) for c in v["color"]]
+                    L.score_color = (r,g,b)
+                if "mods" in v and isinstance(v["mods"], list):
+                    mods = [m if m in MODIFIER_OPTIONS else "—" for m in v["mods"]]
+                    while len(mods) < 3: mods.append("—")
+                    L.modifiers = mods[:3]
         except Exception:
             pass
+
 apply_levels_from_cfg(CFG)
+
+def _derive_mods_from_fields(L: LevelCfg) -> List[str]:
+    mods = []
+    if any(s.type is RuleType.MAPPING for s in (L.rules or [])): mods.append("remap")
+    if getattr(L, "rotations_per_level", 0) > 0:                 mods.append("spin")
+    if getattr(L, "memory_mode", False):                         mods.append("memory")
+    if getattr(L, "control_flip_lr_ud", False):                  mods.append("joystick")
+    if not mods: mods = ["—"]
+    while len(mods) < 3: mods.append("—")
+    return mods[:3]
+
+for L in LEVELS.values():
+    if not getattr(L, "modifiers", None):
+        L.modifiers = _derive_mods_from_fields(L)
 
 # ========= TUTORIAL =========
 @dataclass
@@ -742,6 +790,26 @@ def build_tutorial_for_level(g: 'Game', level: int) -> Optional['TutorialPlayer'
         cap = f"Memorize layout"
         return TutorialPlayer(g, items, caption=cap)
 
+        # === LEVEL 6 — Memory + Rotacje ===
+    if level == 6:
+        items = [
+            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
+            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60, rotate_ring=True),
+            DemoItem(at=0.0, symbol="SQUARE",   slide_delay=1.0, slide_duration=0.60),
+        ]
+        cap = "Memorize + ring rotates"
+        return TutorialPlayer(g, items, caption=cap)
+
+    # === LEVEL 7 — Odwrócone sterowanie ===
+    if level == 7:
+        items = [
+            DemoItem(at=0.0, symbol="CROSS",    slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0, symbol="TRIANGLE", slide_delay=1.0, slide_duration=0.60),
+            DemoItem(at=0.0, symbol="CIRCLE",   slide_delay=1.0, slide_duration=0.60),
+        ]
+        cap = "Controls flipped (←↔→, ↑↔↓)"
+        return TutorialPlayer(g, items, caption=cap)
+
     return None
 
 # ========= RULE MANAGER =========
@@ -786,7 +854,6 @@ class RuleManager:
 
 # ========= BANNER MANAGER =========
 class BannerManager:
-    """Trzyma czas animacji banera: in -> hold -> out(dock)."""
     def __init__(self, in_sec: float, hold_sec: float, out_sec: float):
         self.in_sec = float(in_sec)
         self.hold_sec = float(hold_sec)
@@ -1402,6 +1469,10 @@ class Game:
         self.settings_idx = 0
         self.settings = make_runtime_settings(CFG)
 
+        self.settings_focus_table = False
+        self.level_table_sel_row = 1          
+        self.level_table_sel_col = 1          
+
         # effects
         self.fx = EffectsManager(self.now, glitch_enabled=self.settings.get("glitch_enabled", True))
         self.exit_dir_pos: Optional[str] = None  # "TOP"|"RIGHT"|"LEFT"|"BOTTOM"
@@ -1686,7 +1757,16 @@ class Game:
 # ---- Klawisze i mapowania wejść ----
 
     def _recompute_keymap(self) -> None:
-        self.keymap_current = {k: self.ring_layout[pos] for k, pos in self.key_to_pos.items()}
+        self.keymap_current = {
+            k: self.ring_layout[self._control_pos(pos)]
+            for k, pos in self.key_to_pos.items()
+        }
+
+    def _control_pos(self, pos: str) -> str:
+        if getattr(self.level_cfg, "control_flip_lr_ud", False):
+            flip = {"LEFT":"RIGHT", "RIGHT":"LEFT", "TOP":"BOTTOM", "BOTTOM":"TOP"}
+            return flip.get(pos, pos)
+        return pos
 
 # ---- Ustawienia ----
 
@@ -1705,14 +1785,9 @@ class Game:
             ("Rule bonus", f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
             ("Banner font (center)", f"{self.settings['rule_font_center']}", "rule_font_center"),
             ("Banner font (pinned)", f"{self.settings['rule_font_pinned']}", "rule_font_pinned"),
-            ("", "", None),  # separator
+            ("", "", None),  
         ]
-        # --- dynamiczne wpisy dla leveli ---
-        for lid in range(1, self.levels_active + 1):
-            L = LEVELS.get(lid)
-            if not L: continue
-            col = "#{:02X}{:02X}{:02X}".format(*L.score_color)
-            items.append((f"Level {lid} — Required hits", f"{L.hits_required}", f"level{lid}_hits"))
+
         return items
 
     def settings_move(self, delta: int) -> None:
@@ -1870,6 +1945,58 @@ class Game:
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
 
+    @staticmethod
+    def _level_modifiers_list(self, L: 'LevelCfg') -> list[str]:
+        mods: list[str] = []
+        if any(s.type is RuleType.MAPPING for s in (L.rules or [])):
+            mods.append("remap")
+        if getattr(L, "rotations_per_level", 0) > 0:
+            mods.append("spin")
+        if getattr(L, "memory_mode", False):
+            mods.append("memory")
+        if getattr(L, "control_flip_lr_ud", False):
+            mods.append("invert")
+        return mods or ["none"]
+
+    def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
+        # wyczyść
+        L.rules = []
+        L.rotations_per_level = 0
+        L.memory_mode = False
+        L.control_flip_lr_ud = False
+        # zastosuj
+        for m in (L.modifiers or []):
+            if m == "remap":
+                L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS))
+            elif m == "spin":
+                L.rotations_per_level = max(L.rotations_per_level, 3)
+            elif m == "memory":
+                L.memory_mode = True
+            elif m == "joystick":
+                L.control_flip_lr_ud = True
+
+    def _set_level_mod_slot(self, lid: int, slot_idx: int, direction: int) -> None:
+        # direction: +1 prawo, -1 lewo
+        L = LEVELS.get(lid)
+        if not L: return
+        mods = (L.modifiers or [])[:]
+        while len(mods) < 3: mods.append("—")
+        cur = mods[slot_idx]
+        opts = MODIFIER_OPTIONS[:]  # ["—","remap","spin","memory","joystick"]
+        i = opts.index(cur) if cur in opts else 0
+
+        # pętla po opcjach z omijaniem duplikatów w tym samym levelu
+        for _ in range(len(opts)):
+            i = (i + direction) % len(opts)
+            cand = opts[i]
+            # dozwól "—" zawsze; inne – tylko jeśli nie zajęte w INNYM slocie
+            if cand == "—" or cand not in [mods[j] for j in range(3) if j != slot_idx]:
+                mods[slot_idx] = cand
+                break
+
+        L.modifiers = mods[:3]
+        self._apply_modifiers_to_fields(L)
+
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
 
     def reset_game_state(self) -> None:
@@ -1905,6 +2032,9 @@ class Game:
         # wyczyść reguły poprzedniego levelu (instalacja konkretnych nastąpi po INSTRUCTION)
         self.rules.install([])
 
+        # odtwórz pola z listy wybranych modów (z tabeli)
+        self._apply_modifiers_to_fields(self.level_cfg)
+
         # rotacje / memory / instrukcja — jak u Ciebie
         self._plan_rotations_for_level()
         self.memory_show_icons = True
@@ -1923,6 +2053,8 @@ class Game:
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
             self.memory_intro_until = 0.0
+        
+        self._recompute_keymap()
 
     def _plan_rotations_for_level(self) -> None:
         self.rotation_breaks = set()
@@ -1995,6 +2127,13 @@ class Game:
 
 # ---- Pętla gry i wejścia (flow rozgrywki) ----
 
+    def _last_editable_settings_idx(self) -> int:
+        items = self.settings_items()
+        for i in range(len(items) - 1, -1, -1):
+            if items[i][2] is not None:
+                return i
+        return 0
+
     def handle_event(self, event: pygame.event.Event, iq: InputQueue):
         if event.type == pygame.VIDEORESIZE:
             self.handle_resize(event.w, event.h)
@@ -2021,24 +2160,62 @@ class Game:
                     self.start_game(); return
 
             elif self.scene is Scene.SETTINGS:
-                if event.key == pygame.K_PAGEUP:
-                    self.settings_scroll = max(0.0, self.settings_scroll - self.h * 0.3); return
-                if event.key == pygame.K_PAGEDOWN:
-                    self.settings_scroll = self.settings_scroll + self.h * 0.3; return
-                if event.key == pygame.K_ESCAPE:
-                    self.settings_cancel(); return
-                if event.key == pygame.K_RETURN:
-                    self.settings_save(); return
-                if event.key == pygame.K_UP:
-                    self.settings_move(-1); return
+                # ←/→ – w LIŚCIE: zmiana wartości; w TABELI: edycja aktywnej komórki
+                if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    delta = -1 if event.key == pygame.K_LEFT else +1
+                    if self.settings_focus_table:
+                        col = max(1, min(4, self.level_table_sel_col))
+                        lid = self.level_table_sel_row
+                        if col == 1:
+                            L = LEVELS.get(lid)
+                            if L:
+                                L.hits_required = max(1, min(999, L.hits_required + delta))
+                                if self.level == lid:
+                                    self.level_goal = L.hits_required
+                        else:
+                            self._set_level_mod_slot(lid, col - 2, delta)  # slot 0..2
+                    else:
+                        self.settings_adjust(delta)
+                    return
+
+                # ↓ – w LIŚCIE: ruch w dół / wejście do tabeli; w TABELI: następna kolumna, po ostatniej → następny wiersz
                 if event.key == pygame.K_DOWN:
-                    self.settings_move(+1); return
-                if event.key == pygame.K_LEFT:
-                    self.settings_adjust(-1); return
-                if event.key == pygame.K_RIGHT:
-                    self.settings_adjust(+1); return
-                if event.key == pygame.K_r:
-                    self.settings_reset_highscore(); return
+                    if self.settings_focus_table:
+                        if self.level_table_sel_col < 4:
+                            self.level_table_sel_col += 1
+                        else:
+                            if self.level_table_sel_row < self.levels_active:
+                                self.level_table_sel_row += 1
+                                self.level_table_sel_col = 1
+                        return
+                    else:
+                        last_idx = self._last_editable_settings_idx()
+                        if self.settings_idx == last_idx:
+                            self.settings_focus_table = True
+                            self.level_table_sel_row = 1
+                            self.level_table_sel_col = 1  # Points required
+                            self._ensure_selected_visible()
+                        else:
+                            self.settings_move(+1)
+                        return
+
+                # ↑ – w LIŚCIE: ruch w górę; w TABELI: poprzednia kolumna, przed pierwszą → poprzedni wiersz, a z (row1,col1) → powrót do listy
+                if event.key == pygame.K_UP:
+                    if self.settings_focus_table:
+                        if self.level_table_sel_col > 1:
+                            self.level_table_sel_col -= 1
+                        else:
+                            if self.level_table_sel_row > 1:
+                                self.level_table_sel_row -= 1
+                                self.level_table_sel_col = 4
+                            else:
+                                # wyjście z tabeli na ostatnią edytowalną pozycję listy
+                                self.settings_focus_table = False
+                                self.settings_idx = self._last_editable_settings_idx()
+                        return
+                    else:
+                        self.settings_move(-1)
+                        return
             
             elif self.scene is Scene.INSTRUCTION:
                 # ENTER lub SPACE = skip → natychmiast start gry
@@ -2353,6 +2530,104 @@ class Game:
         chip.blit(t_surf, (pad, pad))
         self.screen.blit(chip, (x, y))
         return pygame.Rect(x, y, w, h)
+
+    def _draw_mod_chip(self, text: str, x: int, y: int, col, *, scale: float = 1.0) -> pygame.Rect:
+        pad_x = int(self.px(8) * scale)
+        pad_y = int(self.px(4) * scale)
+        tw, th = self.font.size(text.upper())
+        w, h = int(tw * scale) + pad_x * 2, int(th * scale) + pad_y * 2
+        rect = pygame.Rect(x, y, w, h)
+        self._draw_round_rect(self.screen, rect, (20,22,30,160),
+                            border=(*col, 220), border_w=1, radius=int(self.px(10) * scale))
+        self.draw_text(text.upper(), pos=(x + pad_x, y + pad_y),
+                    font=self.font, color=col, shadow=True, glitch=False, scale=scale)
+        return rect
+
+    def _draw_levels_table(self, top_y: int, max_height: int | None = None, *, scale_override: float | None = None) -> None:
+        raw_h = self._levels_table_height()
+        scale = float(scale_override) if scale_override is not None else 1.0
+
+        def S(v: int) -> int:
+            return max(1, int(self.px(v) * scale))
+
+        cols  = ["LEVEL", "Points required", "modifier 1", "modifier 2", "modifier 3"]
+        col_w = [S(90), S(200), S(170), S(170), S(170)]
+        table_w = sum(col_w)
+        x0 = (self.w - table_w) // 2
+
+        y = top_y  
+
+        # header
+        header_h = S(28)
+        self._draw_round_rect(self.screen, pygame.Rect(x0, y, table_w, header_h),
+                            (22,26,34,180), border=(120,200,255,180), border_w=1, radius=S(8))
+        cx = x0
+        for i, name in enumerate(cols):
+            self.draw_text(name, pos=(cx + S(8), y + S(6)),
+                        color=ACCENT, font=self.font, shadow=True, glitch=False, scale=scale)
+            cx += col_w[i]
+        y += header_h + S(6)
+
+        self._level_table_cells = {}
+        row_h = S(32)
+        for row in range(1, self.levels_active + 1):
+            L = LEVELS.get(row)
+            if not L: continue
+            rr = pygame.Rect(x0, y, table_w, row_h)
+            self._draw_round_rect(self.screen, rr, (16,18,24,140), border=(40,60,90,140),
+                                border_w=1, radius=S(6))
+            cx = x0
+
+            # col 0
+            cell = pygame.Rect(cx, y, col_w[0], row_h)
+            self.draw_text(str(row), pos=(cell.x + S(10), cell.y + S(6)),
+                        color=INK, font=self.font, shadow=True, glitch=False, scale=scale)
+            self._level_table_cells[(row, 0)] = cell
+            cx += col_w[0]
+
+            # col 1
+            cell = pygame.Rect(cx, y, col_w[1], row_h)
+            self.draw_text(str(getattr(L, "hits_required", 15)),
+                        pos=(cell.x + S(10), cell.y + S(6)),
+                        color=INK, font=self.font, shadow=True, glitch=False, scale=scale)
+            self._level_table_cells[(row, 1)] = cell
+            cx += col_w[1]
+
+            # cols 2..4
+            mods = (L.modifiers or [])[:]
+            while len(mods) < 3: mods.append("—")
+            for c in range(3):
+                cell = pygame.Rect(cx, y, col_w[2 + c], row_h)
+                tag = mods[c]
+                if tag == "—":
+                    self.draw_text("—", pos=(cell.x + S(12), cell.y + S(6)),
+                                color=(170,180,190), font=self.font, shadow=True, glitch=False, scale=scale)
+                else:
+                    col = MOD_COLOR.get("memory" if tag=="memory" else ("invert" if tag=="joystick" else tag), INK)
+                    self._draw_mod_chip(tag, cell.x + S(8), cell.y + S(4), col, scale=scale)
+                self._level_table_cells[(row, 2 + c)] = cell
+                cx += col_w[2 + c]
+
+            if self.settings_focus_table and row == self.level_table_sel_row:
+                sel = self._level_table_cells.get((row, self.level_table_sel_col))
+                if sel:
+                    pygame.draw.rect(self.screen, (120,200,255),
+                                    sel.inflate(-2, -2), width=2, border_radius=S(6))
+            y += row_h + S(6)
+
+        # legenda
+        legend = "Legend: remap (magenta) · spin (gold) · memory (red) · inverted joystick (green)"
+        lw, _ = self.font.size(legend)
+        self.draw_text(legend, pos=(self.w/2 - (lw * scale)/2, y + S(4)),
+                    color=(200,210,225), font=self.font, shadow=True, glitch=False, scale=scale)
+
+    def _levels_table_height(self) -> int:
+        header_h = self.px(28)
+        row_h    = self.px(30)
+        gap      = self.px(6)
+        legend_h = self.font.get_height() + self.px(4)
+        rows_h   = self.levels_active * (row_h + gap)
+        return header_h + rows_h + legend_h
 
     def _soft_glow(self, base: pygame.Surface, color=(120,210,255,60), scale=1.12, passes=2) -> pygame.Surface:
         bw, bh = base.get_size()
@@ -3128,52 +3403,64 @@ class Game:
                 tw, th = self.big.size(title_text)
                 self.draw_text(self.big, title_text, (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
 
-                viewport = self._settings_viewport()
-                y0 = viewport.top
-                item_spacing = self.px(SETTINGS_ITEM_SPACING)
+                top_y = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
 
-                # policz wysokość & zapisz pozycje dla auto-scroll
-                items = self.settings_items()
-                self._settings_row_tops = []
-                # suchy przebieg: zbierz wymiary
-                y_probe = y0
-                for i, (label, value, key) in enumerate(items):
-                    # zmierz wysokość rzędu (bez rysowania)
-                    label_surf = self.settings_font.render(label, True, INK if key is not None else ACCENT)
-                    value_surf = self.settings_font.render(value, True, INK if key is not None else ACCENT)
-                    row_h = max(label_surf.get_height(), value_surf.get_height())
-                    self._settings_row_tops.append((y_probe, row_h))
-                    y_probe += row_h + item_spacing
-                content_h = y_probe - y0
-
-                # ogranicz scroll
-                max_scroll = max(0, content_h - viewport.height)
-                if self.settings_scroll > max_scroll:
-                    self.settings_scroll = float(max_scroll)
-                if self.settings_scroll < 0:
-                    self.settings_scroll = 0.0
-
-                # rysowanie z clipem
-                prev_clip = self.screen.get_clip()
-                self.screen.set_clip(viewport)
-                y = y0 - self.settings_scroll
-                for i, (label, value, key) in enumerate(items):
-                    selected = (i == self.settings_idx and key is not None)
-                    row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
-                    y += row_h + item_spacing
-                self.screen.set_clip(prev_clip)
-
-                # help na dole
                 help1 = "↑/↓ select · ←/→ adjust · PageUp/PageDown scroll · R reset high score"
                 help2 = "ENTER save · ESC back · MouseWheel scroll"
                 help_margin = self.px(SETTINGS_HELP_MARGIN_TOP)
                 help_gap    = self.px(SETTINGS_HELP_GAP)
                 w1, h1 = self.font.size(help1)
                 w2, h2 = self.font.size(help2)
-                base_y = viewport.bottom + help_margin
-                self.draw_text(self.font, help1, (self.w / 2 - w1 / 2, base_y))
-                self.draw_text(self.font, help2, (self.w / 2 - w2 / 2, base_y + h1 + help_gap))
-            
+                help_block_h = help_margin + h1 + help_gap + h2 + self.px(12)
+
+                viewport = pygame.Rect(0, top_y, self.w, max(50, self.h - top_y - help_block_h))
+                prev_clip = self.screen.get_clip()
+                self.screen.set_clip(viewport)
+
+                items = self.settings_items()
+                self._settings_row_tops = []
+                item_spacing = self.px(SETTINGS_ITEM_SPACING)
+                y_probe = top_y
+                for i, (label, value, key) in enumerate(items):
+                    label_surf = self.settings_font.render(label, True, INK if key is not None else ACCENT)
+                    value_surf = self.settings_font.render(value, True, INK if key is not None else ACCENT)
+                    row_h = max(label_surf.get_height(), value_surf.get_height())
+                    self._settings_row_tops.append((y_probe, row_h))
+                    y_probe += row_h + item_spacing
+                list_end_y = y_probe  
+
+                raw_table_h = self._levels_table_height()
+
+                available_h = viewport.height
+
+                scale_for_table = 1.0
+                if raw_table_h > available_h:
+                    scale_for_table = max(0.55, available_h / raw_table_h)
+
+                table_h = int(raw_table_h * scale_for_table)
+                gap_list_table = self.px(8)
+
+                content_h = (list_end_y - top_y) + gap_list_table + table_h
+
+                max_scroll = max(0, content_h - viewport.height)
+                self.settings_scroll = max(0.0, min(float(max_scroll), float(self.settings_scroll)))
+
+                y = top_y - int(self.settings_scroll)
+
+                for i, (label, value, key) in enumerate(items):
+                    selected = (i == self.settings_idx and key is not None and not self.settings_focus_table)
+                    row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
+                    y += row_h + item_spacing
+
+                table_top = y + gap_list_table
+                self._draw_levels_table(table_top, max_height=available_h, scale_override=scale_for_table)
+
+                self.screen.set_clip(prev_clip)
+
+                base_y = self.h - (h1 + help_gap + h2) - self.px(14)
+                self.draw_text(self.font, help1, (self.w/2 - w1/2, base_y))
+                self.draw_text(self.font, help2, (self.w/2 - w2/2, base_y + h1 + help_gap))
+
             elif self.scene is Scene.INSTRUCTION:
                 # najpierw tutorial (ring + animacje)
                 if self.tutorial:

@@ -9,8 +9,8 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      765,
-      1360
+      651,
+      1157
     ]
   },
   "speedup": {
@@ -48,7 +48,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 124,
+  "highscore": 128,
   "levels": {
     "1": {
       "hits": 15,

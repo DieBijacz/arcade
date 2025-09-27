@@ -76,10 +76,15 @@ def commit_settings(
     # 2) dump leveli (hits + kolor), ale bez narzucania struktury klas
     levels_dump: Dict[str, Any] = {}
     for lid, L in LEVELS.items():
-        # spodziewamy się pól hits_required i score_color (tuple RGB)
         hits = int(getattr(L, "hits_required", 15))
         col  = tuple(getattr(L, "score_color", (235,235,235)))
-        levels_dump[str(lid)] = {"hits": hits, "color": [int(col[0]), int(col[1]), int(col[2])]}
+        mods = list(getattr(L, "modifiers", [])) or []
+        while len(mods) < 4: mods.append("—")
+        levels_dump[str(lid)] = {
+            "hits": hits,
+            "color": [int(col[0]), int(col[1]), int(col[2])],
+            "mods": [str(m) for m in mods[:4]],
+        }
 
     # 3) payload do pliku (częściowy — merge w save_config)
     return {
