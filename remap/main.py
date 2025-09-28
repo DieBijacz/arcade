@@ -93,6 +93,7 @@ UI_RADIUS = 8
 # --- Levels --- (progresja poziomów)
 LEVEL_GOAL_PER_LEVEL = 15        # ile trafień, by wskoczyć na kolejny poziom
 LEVELS_ACTIVE_FOR_NOW = 7        # faktycznie używana liczba poziomów
+LEVELS_MAX = 10
 
 # Tempo gry i tryby
 TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]  # startowy czas na reakcję (tryb SPEEDUP)
@@ -198,6 +199,8 @@ RULE_BANNER_PIN_SCALE = 0.65      # skala panelu po „zadokowaniu” u góry
 RULE_SYMBOL_SCALE_CENTER = 1.00   # skala symboli w centrum
 RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
 RULE_BANNER_MIN_W_FACTOR = 0.90   # minimalna szerokość panelu względem ekranu
+RULE_BANNER_FONT_CENTER_PX = 64
+RULE_BANNER_FONT_PINNED_PX = 40
 
 # --- Memory (ring hide conditions) ---
 MEMORY_HIDE_AFTER_MOVES = 1      # po ilu ruchach znikają ikony
@@ -246,6 +249,7 @@ MENU_TITLE_Y_FACTOR = 0.28           # pionowe położenie tytułu w MENU (propo
 MENU_MODE_GAP = 20                   # odstęp tytuł → wiersz „Mode:” (px; w kodzie skalowany)
 MENU_HINT_GAP = 48                   # odstęp do pierwszej podpowiedzi
 MENU_HINT2_EXTRA_GAP = 12            # dodatkowy odstęp do drugiej podpowiedzi
+SETTINGS_TABLE_MAX_W = 1100          # maksymalna szerokość tabeli (tylko w landscape)
 
 # --- Menu: styl tytułu REMAP ---
 MENU_TITLE_GLOBAL_SCALE = 1.18
@@ -450,6 +454,20 @@ def apply_levels_from_cfg(cfg: dict) -> None:
             pass
 
 apply_levels_from_cfg(CFG)
+
+def _ensure_level_exists(lid: int) -> None:
+    if lid in LEVELS:
+        return
+    LEVELS[lid] = LevelCfg(
+        id=lid,
+        rules=[],
+        rotations_per_level=0,
+        memory_mode=False,
+        instruction=f"Level {lid}",
+        hits_required=LEVEL_GOAL_PER_LEVEL,
+        modifiers=_derive_mods_from_fields(LevelCfg(lid))  # wstępne „— — —”
+    )
+
 
 def _derive_mods_from_fields(L: LevelCfg) -> List[str]:
     mods = []
@@ -1602,8 +1620,8 @@ class Game:
         self.settings_font     = self._font(S(FONT_SIZE_SETTINGS))
 
         # fonty banera reguły – bazują na wartościach z configu, ale też skaluje je UI
-        c = S(int(CFG["rules"].get("banner_font_center", 64)))
-        p = S(int(CFG["rules"].get("banner_font_pinned", 40)))
+        c = S(int(RULE_BANNER_FONT_CENTER_PX))
+        p = S(int(RULE_BANNER_FONT_PINNED_PX))
         self.rule_font_center = self._font(max(8, c))
         self.rule_font_pinned = self._font(max(8, p))
         self.hint_font        = self._font(max(8, int(self.font.get_height() * 0.85)))
@@ -1755,9 +1773,9 @@ class Game:
             ("Glitch", "ON" if self.settings.get('glitch_enabled', True) else "OFF", "glitch_enabled"),
             ("Ring palette", f"{self.settings['ring_palette']}", "ring_palette"),
             ("High score", f"{self.highscore}", None),
+            ("Reset high score", "PRESS \u2190/\u2192", "highscore_reset"),
             ("Rule bonus", f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
-            ("Banner font (center)", f"{self.settings['rule_font_center']}", "rule_font_center"),
-            ("Banner font (pinned)", f"{self.settings['rule_font_pinned']}", "rule_font_pinned"),
+            ("Levels available", f"{int(self.levels_active)}", "levels_active"),
             ("", "", None),  
         ]
 
@@ -1819,7 +1837,7 @@ class Game:
             i = (i + delta) % len(opts)
             self.settings["ring_palette"] = opts[i]
             return
-
+        
         # --- per-level edits ---
         if key and key.startswith("level") and ("_hits" in key or "_color" in key):
             try:
@@ -1841,6 +1859,30 @@ class Game:
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
+        
+        if key == "glitch_enabled":
+            self.settings["glitch_enabled"] = not bool(self.settings.get("glitch_enabled", True))
+            self.fx.set_enabled(bool(self.settings["glitch_enabled"]))  # efekt włącza/wyłącza się natychmiast
+            return
+        
+        if key == "highscore_reset":
+            self.highscore = 0
+            CFG["highscore"] = 0
+            save_config({"highscore": 0})
+            return
+        
+        if key == "levels_active":
+            new_val = int(max(1, min(LEVELS_MAX, int(self.levels_active) + delta)))
+            # dobuduj brakujące LevelCfg przy zwiększaniu
+            if new_val > self.levels_active:
+                for lid in range(self.levels_active + 1, new_val + 1):
+                    _ensure_level_exists(lid)
+            self.levels_active = new_val
+            # korekta kursora w tabeli, jeśli wypadł poza zakres
+            if self.level_table_sel_row > self.levels_active:
+                self.level_table_sel_row = self.levels_active
+                self.level_table_sel_col = min(self.level_table_sel_col, 4)
+            return
 
         step = {
             "target_time_initial": 0.1,
@@ -1850,8 +1892,6 @@ class Game:
             "music_volume": 0.05,
             "sfx_volume": 0.05,
             "timed_rule_bonus": 0.5,
-            "rule_font_center": 2,
-            "rule_font_pinned": 2,
         }.get(key, 0.0)
 
         if step == 0.0:
@@ -1886,6 +1926,11 @@ class Game:
 
     def settings_save(self) -> None:
         clamp_settings(self.settings)
+
+        for k in ("rule_font_center", "rule_font_pinned"):
+            if k in self.settings:
+                self.settings.pop(k, None)
+
         payload = commit_settings(
             self.settings,
             CFG=CFG,
@@ -1894,6 +1939,14 @@ class Game:
             WINDOWED_DEFAULT_SIZE=WINDOWED_DEFAULT_SIZE,
             RULE_EVERY_HITS=RULE_EVERY_HITS,
         )
+
+        try:
+            if "rules" in payload and isinstance(payload["rules"], dict):
+                payload["rules"].pop("banner_font_center", None)
+                payload["rules"].pop("banner_font_pinned", None)
+        except Exception:
+            pass
+
         save_config(payload)
 
         def _deep_merge(dst, src):
@@ -1904,9 +1957,15 @@ class Game:
                     dst[k] = v
         _deep_merge(CFG, payload)
 
+        try:
+            if "rules" in CFG and isinstance(CFG["rules"], dict):
+                CFG["rules"].pop("banner_font_center", None)
+                CFG["rules"].pop("banner_font_pinned", None)
+        except Exception:
+            pass
+
         apply_levels_from_cfg(CFG)
 
-        # reszta jak była
         if self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings.get("music_volume", CFG["audio"]["music_volume"])))
         for sfx in getattr(self, "sfx", {}).values():
@@ -2491,6 +2550,13 @@ class Game:
                     font=self.font, color=col, shadow=True, glitch=False, scale=scale)
         return rect
 
+    def _draw_cell_underline(self, cell: pygame.Rect, *, inset_px: int, thickness: int) -> None:
+        r = cell.inflate(-inset_px*2, -inset_px*2)
+        y = r.bottom - max(2, thickness)
+        x1 = r.left
+        x2 = r.right
+        pygame.draw.line(self.screen, (120, 200, 255), (x1, y), (x2, y), max(2, thickness))
+
     def _draw_levels_table(self, top_y: int, max_height: int | None = None, *, scale_override: float | None = None) -> None:
         raw_h = self._levels_table_height()
         scale = float(scale_override) if scale_override is not None else 1.0
@@ -2507,16 +2573,18 @@ class Game:
         side_pad = int(self.w * 0.01)
         avail_w = max(1, self.w - side_pad * 2)
 
+        # W orientacji horyzontalnej ogranicz szerokość tabeli i wyśrodkuj
+        if self.w > self.h:
+            avail_w = min(avail_w, SETTINGS_TABLE_MAX_W)
+
         k = avail_w / max(1, base_table_w)
         col_w = [max(1, int(round(w * k))) for w in base_col_w]
 
         delta = avail_w - sum(col_w)
-        col_w[-1] += delta  # ostatnia kolumna „bierze” różnicę
-
+        col_w[-1] += delta  
         table_w = avail_w
-        x0 = side_pad
+        x0 = (self.w - table_w) // 2 if table_w < (self.w - side_pad * 2) else side_pad
 
-        # --- tu brakowało inicjalizacji 'y'
         y = top_y
 
         # header
@@ -2541,42 +2609,58 @@ class Game:
                                 border_w=1, radius=S(6))
             cx = x0
 
-            # col 0
+            # col 0 (LEVEL) — wycentrowany tekst
             cell = pygame.Rect(cx, y, col_w[0], row_h)
-            self.draw_text(str(row), pos=(cell.x + S(10), cell.y + S(6)),
+            txt = str(row)
+            tw, th = self.font.size(txt)
+            self.draw_text(txt,
+                        pos=(cell.centerx - int(tw*scale)/2, cell.centery - int(th*scale)/2),
                         color=INK, font=self.font, shadow=True, glitch=False, scale=scale)
             self._level_table_cells[(row, 0)] = cell
             cx += col_w[0]
 
-            # col 1
+            # col 1 (POINTS / hits_required) — wycentrowany tekst
             cell = pygame.Rect(cx, y, col_w[1], row_h)
-            self.draw_text(str(getattr(L, "hits_required", 15)),
-                        pos=(cell.x + S(10), cell.y + S(6)),
+            pts = str(getattr(L, "hits_required", 15))
+            tw, th = self.font.size(pts)
+            self.draw_text(pts,
+                        pos=(cell.centerx - int(tw*scale)/2, cell.centery - int(th*scale)/2),
                         color=INK, font=self.font, shadow=True, glitch=False, scale=scale)
             self._level_table_cells[(row, 1)] = cell
             cx += col_w[1]
 
-            # cols 2..4
+            # cols 2..4 (mod chips) — chip wycentrowany w komórce
             mods = (L.modifiers or [])[:]
-            while len(mods) < 3:
-                mods.append("—")
+            while len(mods) < 3: mods.append("—")
             for c in range(3):
                 cell = pygame.Rect(cx, y, col_w[2 + c], row_h)
                 tag = mods[c]
                 if tag == "—":
-                    self.draw_text("—", pos=(cell.x + S(12), cell.y + S(6)),
+                    # myślnik wycentrowany
+                    m = "—"
+                    tw, th = self.font.size(m)
+                    self.draw_text(m,
+                                pos=(cell.centerx - int(tw*scale)/2, cell.centery - int(th*scale)/2),
                                 color=(170,180,190), font=self.font, shadow=True, glitch=False, scale=scale)
                 else:
+                    # policz rozmiar chipa tak jak _draw_mod_chip, żeby go wycentrować
+                    pad_x = int(self.px(8) * scale)
+                    pad_y = int(self.px(4) * scale)
+                    tw, th = self.font.size(tag.upper())
+                    w = int(tw * scale) + pad_x * 2
+                    h = int(th * scale) + pad_y * 2
+                    chip_x = int(cell.centerx - w/2)
+                    chip_y = int(cell.centery - h/2)
                     col = MOD_COLOR.get("memory" if tag == "memory" else ("invert" if tag == "joystick" else tag), INK)
-                    self._draw_mod_chip(tag, cell.x + S(8), cell.y + S(4), col, scale=scale)
+                    self._draw_mod_chip(tag, chip_x, chip_y, col, scale=scale)
                 self._level_table_cells[(row, 2 + c)] = cell
                 cx += col_w[2 + c]
 
             if self.settings_focus_table and row == self.level_table_sel_row:
                 sel = self._level_table_cells.get((row, self.level_table_sel_col))
                 if sel:
-                    pygame.draw.rect(self.screen, (120,200,255),
-                                    sel.inflate(-2, -2), width=2, border_radius=S(6))
+                    self._draw_cell_underline(sel, inset_px=S(6), thickness=S(3))
+
             y += row_h + S(6)
 
         # legenda — wycentrowana względem tabeli (z paddingiem), nie całego ekranu
