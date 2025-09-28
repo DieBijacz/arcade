@@ -1,0 +1,222 @@
+diff --git a/remap/main.py b/remap/main.py
+index 0000000..0000000 100644
+--- a/remap/main.py
++++ b/remap/main.py
+@@ -1530,41 +1530,26 @@ class Game:
+-    def draw_text(self, *args, **kwargs) -> pygame.Surface:
+-        if args and not isinstance(args[0], str):
+-            # LEGACY: (font, text, pos, ...)
+-            font  = args[0]
+-            text  = args[1] if len(args) > 1 else ""
+-            pos   = args[2] if len(args) > 2 else None
+-            size_px = None
+-        else:
+-            # NEW: (text, ...)
+-            text  = args[0] if args else ""
+-            pos   = kwargs.get("pos", None)
+-            font  = kwargs.get("font", None)
+-            size_px = kwargs.get("size_px", None)
+-
+-        color         = kwargs.get("color", INK)
+-        shadow        = kwargs.get("shadow", True)
+-        glitch        = kwargs.get("glitch", True)
+-        scale         = float(kwargs.get("scale", 1.0))
+-        alpha         = kwargs.get("alpha", None)
+-        shadow_offset = kwargs.get("shadow_offset", TEXT_SHADOW_OFFSET)
++    def draw_text(
++        self,
++        text: str,
++        *,
++        pos: Optional[tuple[int,int]] = None,
++        font: Optional[pygame.font.Font] = None,
++        size_px: Optional[int] = None,
++        color=INK,
++        shadow: bool = True,
++        glitch: bool = True,
++        scale: float = 1.0,
++        alpha: Optional[int] = None,
++        shadow_offset: tuple[int,int] = TEXT_SHADOW_OFFSET,
++    ) -> pygame.Surface:
+@@ -1577,12 +1562,12 @@ class Game:
+-        if font is None:
+-            px = self.px(size_px) if size_px else self.font.get_height()
+-            font = self._font(px)
++        if font is None:
++            px = self.px(size_px) if size_px else self.font.get_height()
++            font = self._font(px)
+@@ -1603,10 +1588,10 @@ class Game:
+-        if pos is not None:
+-            x, y = pos
+-            self.screen.blit(out, (int(x), int(y)))
++        if pos is not None:
++            x, y = pos
++            self.screen.blit(out, (int(x), int(y)))
+         return out
+@@ -1770,58 +1755,39 @@ class Game:
+-    def _draw_rule_banner_anim(self) -> None:
+-        pair = self.rules.current_mapping
+-        if not pair:
+-            return
+-        now = self.now()
+-        phase, p = self.banner.phase(now)
+-
+-        mid_y = int(self.h * 0.30)
+-        pinned_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
+-
+-        if phase == "in" and getattr(self.banner, "from_pinned", False):
+-            panel_scale = RULE_BANNER_PIN_SCALE + (1.0 - RULE_BANNER_PIN_SCALE) * self._ease_out_cubic(p)
+-            symbol_scale = RULE_SYMBOL_SCALE_PINNED + (RULE_SYMBOL_SCALE_CENTER - RULE_SYMBOL_SCALE_PINNED) * self._ease_out_cubic(p)
+-            y = int(pinned_y + (mid_y - pinned_y) * self._ease_out_cubic(p))
+-            font = self.rule_font_center
+-        elif phase == "in":
+-            panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
+-            start_y = -int(self.h * 0.35)
+-            y = int(start_y + (mid_y - start_y) * self._ease_out_cubic(p))
+-        elif phase == "hold":
+-            panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
+-            y = mid_y
+-            self.banner.from_pinned = False
+-        else:
+-            panel_scale = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * self._ease_out_cubic(p)
+-            symbol_scale = RULE_SYMBOL_SCALE_CENTER + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * self._ease_out_cubic(p)
+-            y = int(mid_y + (pinned_y - mid_y) * self._ease_out_cubic(p))
+-            font = self.rule_font_pinned
+-
+-        panel_scale *= self.fx.pulse_scale('banner')
+-        panel, shadow = self._render_rule_panel_surface(pair, panel_scale, symbol_scale, label_font=font)
+-        panel_w, panel_h = panel.get_size()
+-        panel_x = (self.w - panel_w) // 2
+-        self.screen.blit(shadow, (panel_x + 3, y + 5))
+-        self.screen.blit(panel, (panel_x, y))
+-
+-    def _draw_rule_banner_pinned(self) -> None:
+-        pair = self.rules.current_mapping
+-        if not pair:
+-            return
+-        panel_scale = RULE_BANNER_PIN_SCALE * self.fx.pulse_scale('banner')
+-        symbol_scale = RULE_SYMBOL_SCALE_PINNED
+-        panel, shadow = self._render_rule_panel_surface(pair, panel_scale, symbol_scale, label_font=self.rule_font_pinned)
+-        panel_w, panel_h = panel.get_size()
+-        panel_x = (self.w - panel_w) // 2
+-        panel_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
+-        self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
+-        self.screen.blit(panel, (panel_x, panel_y))
++    def _draw_rule_banner(self) -> None:
++        """Jedna ścieżka: gdy banner aktywny – animacja, inaczej dokowany pinned."""
++        pair = self.rules.current_mapping
++        if not pair:
++            return
++        now = self.now()
++        if self.banner.is_active(now):
++            phase, p = self.banner.phase(now)
++            mid_y = int(self.h * 0.30)
++            pinned_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
++            if phase == "in" and getattr(self.banner, "from_pinned", False):
++                k = self._ease_out_cubic(p)
++                panel_scale  = RULE_BANNER_PIN_SCALE + (1.0 - RULE_BANNER_PIN_SCALE) * k
++                symbol_scale = RULE_SYMBOL_SCALE_PINNED + (RULE_SYMBOL_SCALE_CENTER - RULE_SYMBOL_SCALE_PINNED) * k
++                y = int(pinned_y + (mid_y - pinned_y) * k)
++                font = self.rule_font_center
++            elif phase == "in":
++                k = self._ease_out_cubic(p)
++                panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
++                start_y = -int(self.h * 0.35)
++                y = int(start_y + (mid_y - start_y) * k)
++            elif phase == "hold":
++                panel_scale, symbol_scale, font = 1.0, RULE_SYMBOL_SCALE_CENTER, self.rule_font_center
++                y = mid_y
++                self.banner.from_pinned = False
++            else:
++                k = self._ease_out_cubic(p)
++                panel_scale  = 1.0 + (RULE_BANNER_PIN_SCALE - 1.0) * k
++                symbol_scale = RULE_SYMBOL_SCALE_CENTER + (RULE_SYMBOL_SCALE_PINNED - RULE_SYMBOL_SCALE_CENTER) * k
++                y = int(mid_y + (pinned_y - mid_y) * k)
++                font = self.rule_font_pinned
++            panel_scale *= self.fx.pulse_scale('banner')
++            panel, shadow = self._render_rule_panel_surface(pair, panel_scale, symbol_scale, label_font=font)
++            panel_w, panel_h = panel.get_size()
++            panel_x = (self.w - panel_w) // 2
++            self.screen.blit(shadow, (panel_x + 3, y + 5))
++            self.screen.blit(panel, (panel_x, y))
++        else:
++            panel_scale = RULE_BANNER_PIN_SCALE * self.fx.pulse_scale('banner')
++            symbol_scale = RULE_SYMBOL_SCALE_PINNED
++            panel, shadow = self._render_rule_panel_surface(pair, panel_scale, symbol_scale, label_font=self.rule_font_pinned)
++            panel_w, panel_h = panel.get_size()
++            panel_x = (self.w - panel_w) // 2
++            panel_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + int(self.h * 0.02)))
++            self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
++            self.screen.blit(panel, (panel_x, panel_y))
+@@ -1870,8 +1836,8 @@ class Game:
+-        # przypięty baner reguły, jeśli aktywny mapping i nie trwa animacja banera
+-        if self.rules.current_mapping and not self.banner.is_active(self.now()):
+-            self._draw_rule_banner_pinned()
++        # Baner reguły (sam wybiera: anim/pinned)
++        if self.rules.current_mapping:
++            self._draw_rule_banner()
+@@ -1900,10 +1866,10 @@ class Game:
+-            if self.scene is Scene.GAME and self.rules.current_mapping and self.banner.is_active(self.now()):
++            if self.scene is Scene.GAME and self.rules.current_mapping and self.banner.is_active(self.now()):
+                 self._blit_bg()
+-                self._draw_rule_banner_anim()
++                self._draw_rule_banner()
+             elif self.scene is Scene.GAME:
+                 self._draw_gameplay()
+@@ -1972,7 +1938,12 @@ class Game:
+-                hint = "ENTER = start    ·    O = settings    ·    ESC = quit"
+-                hf = self.font
+-                hw, hh = hf.size(hint)
+-                bottom_gap = self.px(24)
+-                self.draw_text(hf, hint, (self.w/2 - hw/2, self.h - bottom_gap - hh//4), color=(210, 220, 235))
++                hint = "ENTER = start    ·    O = settings    ·    ESC = quit"
++                hw, hh = self.font.size(hint)
++                bottom_gap = self.px(24)
++                self.draw_text(
++                    hint,
++                    pos=(self.w/2 - hw/2, self.h - bottom_gap - hh//4),
++                    font=self.font,
++                    color=(210, 220, 235),
++                    glitch=False,
++                )
+@@ -2009,11 +1980,14 @@ class Game:
+-                formula = f"{self.score} + {self.best_streak} streak"
+-                fw, fh = self.mid.size(formula)
+-                self.draw_text(
+-                    self.mid, formula,
+-                    (cx - fw // 2, cy + total_surf.get_height() // 2 + self.px(8)),
+-                    color=ACCENT, shadow=True, glitch=False
+-                )
++                formula = f"{self.score} + {self.best_streak} streak"
++                fw, fh = self.mid.size(formula)
++                self.draw_text(
++                    formula,
++                    pos=(cx - fw // 2, cy + total_surf.get_height() // 2 + self.px(8)),
++                    font=self.mid,
++                    color=ACCENT,
++                    shadow=True,
++                    glitch=False,
++                )
+@@ -2032,7 +2006,12 @@ class Game:
+-                self.draw_text(self.big, title_text, (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
++                self.draw_text(
++                    title_text,
++                    pos=(self.w / 2 - tw / 2, int(self.h * SETTINGS_TITLE_Y_FACTOR)),
++                    font=self.big,
++                    glitch=False,
++                )
+@@ -2135,7 +2114,12 @@ class Game:
+-                self.draw_text(self.big, title, (self.w/2 - tw/2, title_y))
++                self.draw_text(
++                    title,
++                    pos=(self.w/2 - tw/2, title_y),
++                    font=self.big,
++                )
+@@ -2144,7 +2128,13 @@ class Game:
+-                    self.draw_text(self.mid, cap, (self.w/2 - cw/2, title_y + th + cap_margin), color=ACCENT)
++                    self.draw_text(
++                        cap,
++                        pos=(self.w/2 - cw/2, title_y + th + cap_margin),
++                        font=self.mid,
++                        color=ACCENT,
++                        glitch=False,
++                    )

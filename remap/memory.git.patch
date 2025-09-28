@@ -1,0 +1,384 @@
+--- a/remap/main.py
++++ b/remap/main.py
+@@
+ import pygame
+@@
+ IMAGES = ImageStore()
+ 
++# ========= SMALL UTILS (reuse & terseness) =========
++def clamp01(x: float) -> float:
++    """Clamp to 0..1 (compact replacement for max(0.0, min(1.0, x)))."""
++    return 0.0 if x <= 0.0 else 1.0 if x >= 1.0 else x
++
++def ring_pos_xy(cx: int, cy: int, r: int) -> dict[str, tuple[int,int]]:
++    """Common mapping of ring positions to XY — removes repeated dict literals."""
++    return {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
++
+ # ========= GPIO (optional) =========
+@@
+ class Game:
+@@
+-        self.memory_show_icons = True
+-        self.memory_intro_until = 0.0   # (stare – nie użyjemy już do ukrywania)
+-        self.memory_hide_deadline = 0.0 # nowy: kiedy najpóźniej ukryć ikony (czasowo)
+-        self.memory_moves_count = 0     # nowy: ile ruchów wykonano zanim znikną
++        self.memory_show_icons = True
++        self.memory_hide_deadline = 0.0 # kiedy najpóźniej ukryć ikony (czasowo)
++        self.memory_moves_count = 0     # ile ruchów wykonano zanim znikną
++        # kontrola startu/ponownego startu okna podglądu w memory:
++        self.memory_preview_armed = False   # „uzbrojenie” startu — czeka np. na koniec bannera
++        self._banner_was_active = False     # detekcja zbocza końca bannera
+@@
+-    def measure_text(self, text: str, *, font: Optional[pygame.font.Font] = None, size_px: Optional[int] = None, scale: float = 1.0) -> tuple[int, int]:
+-        if font is None:
+-            px = self.px(size_px) if size_px else self.font.get_height()
+-            font = self._font(px)
+-        surf = font.render(text, True, (255, 255, 255))
+-        if scale != 1.0:
+-            w, h = surf.get_size()
+-            return (max(1, int(w * scale)), max(1, int(h * scale)))
+-        return surf.get_size()
++    # (measure_text) — nieużywane, usunięte dla zwięzłości
+ 
+@@
+-    @staticmethod
+-    def _level_modifiers_list(self, L: 'LevelCfg') -> list[str]:
+-        mods: list[str] = []
+-        if any(s.type is RuleType.MAPPING for s in (L.rules or [])):
+-            mods.append("remap")
+-        if getattr(L, "rotations_per_level", 0) > 0:
+-            mods.append("spin")
+-        if getattr(L, "memory_mode", False):
+-            mods.append("memory")
+-        if getattr(L, "control_flip_lr_ud", False):
+-            mods.append("invert")
+-        return mods or ["none"]
++    # (_level_modifiers_list) — nieużywane, usunięte
+ 
+@@
+     def apply_level(self, lvl: int) -> None:
+@@
+-        self.memory_show_icons = True
+-        self.memory_intro_until = 0.0
++        self.memory_show_icons = True
+         self.instruction_text = f"LEVEL {lvl}"
+@@
+-        if self.level_cfg.memory_mode:
+-            self.memory_show_icons = True
+-            self.memory_intro_until = 0.0
++        if self.level_cfg.memory_mode:
++            self.memory_show_icons = True
+@@
+     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
+         now = self.now()
+         self.banner.start(now, from_pinned=from_pinned)
+@@
+         if self.mode is Mode.TIMED:
+             self.time_left += ADDITIONAL_RULE_TIME 
++        # memory+remap: licznik ukrycia startuje dopiero po banerze
++        if self.level_cfg.memory_mode:
++            self.memory_preview_armed = True
++            self.memory_hide_deadline = 0.0   # zatrzymaj ewentualne wcześniejsze odliczanie
+ 
+@@
+     def _enter_gameplay_after_instruction(self) -> None:
+         self.scene = Scene.GAME
+         self.tutorial = None
+@@
+-        # memory – okno podglądu po wejściu do GAME
+-        if self.level_cfg.memory_mode:
+-            self.memory_show_icons = True
+-            self.memory_moves_count = 0
+-            self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
++        # memory – przygotuj, ale odpal licznik kontekstowo (po bannerze jeśli jest)
++        if self.level_cfg.memory_mode:
++            self.memory_show_icons = True
++            self.memory_moves_count = 0
++            self.memory_hide_deadline = 0.0
++            self.memory_preview_armed = True
+@@
+         if mapping_spec:
+             self.rules.roll_mapping(SYMS)
+             self._start_mapping_banner(from_pinned=False)
+-        else:
+-            # brak bannera → natychmiastowy start okna podglądu memory
+-            if self.level_cfg.memory_mode and self.memory_preview_armed:
+-                self._memory_start_preview(reset_moves=False, force_unhide=False)
++        else:
++            # brak bannera → natychmiast odpal podgląd memory
++            if self.level_cfg.memory_mode and self.memory_preview_armed:
++                self._memory_start_preview(reset_moves=False, force_unhide=False)
+ 
+         # 3) Nowy target na start rozgrywki
+         self.new_target()
+ 
++    # --- MEMORY helpers ---
++    def _memory_start_preview(self, *, reset_moves: bool = True, force_unhide: bool = False) -> None:
++        """Odpal/ponów okno podglądu w trybie memory."""
++        if not self.level_cfg.memory_mode:
++            return
++        if force_unhide:
++            self.memory_show_icons = True
++        if reset_moves:
++            self.memory_moves_count = 0
++        self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
++        self.memory_preview_armed = False
++
+@@
+     def update(self, iq: InputQueue) -> None:
+         now = self.now()
+         self.fx.maybe_schedule_text_glitch()
+ 
++        # --- Remap banner: wykryj koniec animacji i wystartuj odliczanie memory, jeśli „uzbrojone”
++        banner_active = self.banner.is_active(now)
++        if self._banner_was_active and not banner_active:
++            if self.level_cfg.memory_mode and self.memory_preview_armed:
++                self._memory_start_preview(reset_moves=False, force_unhide=False)
++        self._banner_was_active = banner_active
++
+         # debounce
+         if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
+             self.lock_until_all_released = False
+@@
+-        if self.banner.is_active(now):
++        if banner_active:
+             _ = iq.pop_all()
+             # nie licz upływu czasu w TIMED, „zamrażamy” też timeout targetu
+             self._last_tick = now
+             return
+@@
+-        if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
+-            self.target is not None and self.target_deadline is not None and
+-            self.target_time > 0):
++        if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
++            self.target is not None and self.target_deadline is not None and
++            self.target_time > 0):
+@@
+-            left_ratio = remaining / max(1e-6, self.target_time)
++            left_ratio = remaining / max(1e-6, self.target_time)
+ 
+             if left_ratio <= 0.5:
+@@
+-        if self.level_cfg.memory_mode and self.memory_show_icons:
+-            if now >= self.memory_hide_deadline:
++        if self.level_cfg.memory_mode and self.memory_show_icons:
++            if self.memory_hide_deadline > 0.0 and now >= self.memory_hide_deadline:
+                 self.memory_show_icons = False
+@@
+ class InputRing:
+@@
+-        # --- Icons on the ring (same as before) ---
++        # --- Icons on the ring ---
+         if not (g.level_cfg.memory_mode and not g.memory_show_icons):
+             icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
+-            pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
++            pos_xy = ring_pos_xy(cx, cy, r)
+             active_layout = layout if layout is not None else g.ring_layout
+             for pos, (ix, iy) in pos_xy.items():
+                 name = active_layout.get(pos, DEFAULT_RING_LAYOUT[pos])
+                 scale = self.g.fx.ring_pulse_scale(pos)
+                 size  = max(1, int(icon_size * scale))
+                 rect  = pygame.Rect(0, 0, size, size)
+@@
+ class TutorialPlayer:
+@@
+             else:
+                 prog = (g.now() - slide_start) / max(1e-6, it.slide_duration)
+-                prog = 0.0 if prog < 0 else 1.0 if prog > 1 else prog
++                prog = clamp01(prog)
+                 eased = g._ease_out_cubic(prog)
+ 
+                 r = int(base_size * RING_RADIUS_FACTOR)
+-                pos_xy = {"TOP":(cx,cy-r), "RIGHT":(cx+r,cy), "LEFT":(cx-r,cy), "BOTTOM":(cx,cy+r)}
++                pos_xy = ring_pos_xy(cx, cy, r)
+                 tx, ty = pos_xy[target_pos]
+                 ex = int(cx + (tx - cx) * 1.2 * eased)
+                 ey = int(cy + (ty - cy) * 1.2 * eased)
+@@
+ class EffectsManager:
+@@
+     def ring_pulse_scale(self, key: str) -> float:
+         st, en = self._ring_pulses.get(key, (0.0, 0.0))
+         if st <= 0.0 or self.now() >= en:
+             return 1.0
+         dur = max(1e-6, en - st)
+-        t = (self.now() - st) / dur
+-        # delikatny, czytelny pulse
++        t = clamp01((self.now() - st) / dur)
++        # delikatny, czytelny pulse
+         local_max = 1.14  # ~+14% skali
+-        return 1.0 + (local_max - 1.0) * math.sin(math.pi * max(0.0, min(1.0, t)))
++        return 1.0 + (local_max - 1.0) * math.sin(math.pi * t)
+@@
+     def _pulse_curve01(self, t: float, kind: str) -> float:
+         import math
+-        t = max(0.0, min(1.0, t))
++        t = clamp01(t)
+         # skala = baza * mnożnik kind
+         kscale = float(PULSE_KIND_SCALE.get(kind, 1.0))
+         max_scale = float(PULSE_BASE_MAX_SCALE) * kscale
+         return 1.0 + (max_scale - 1.0) * math.sin(math.pi * t)
+@@
+     def pulse_scale(self, kind: str) -> float:
+         start, until = self._pulses.get(kind, (0.0, 0.0))
+         if start <= 0.0:
+             return 1.0
+         now = self.now()
+         if now >= until:
+             return 1.0
+         dur = max(1e-6, until - start)
+-        t = (now - start) / dur
++        t = clamp01((now - start) / dur)
+         return self._pulse_curve01(t, kind)
+@@
+     def exit_progress(self) -> float:
+         if not self.exit_active:
+             return 0.0
+-        t = (self.now() - self.exit_start) / max(1e-6, self.exit_duration)
+-        return max(0.0, min(1.0, t))
++        return clamp01((self.now() - self.exit_start) / max(1e-6, self.exit_duration))
+@@
+     def _draw_label_value_vstack(
+-        self,
+-        *,
+-        label: str, value: str, left: bool, anchor_rect: pygame.Rect
+-    ) -> None:
+-        lab = self.draw_text(label,  color=HUD_LABEL_COLOR, font=self.hud_label_font, shadow=True)
+-        val = self.draw_text(value,  color=HUD_VALUE_COLOR, font=self.hud_value_font, shadow=True)
+-
+-        total_h = lab.get_height() + 2 + val.get_height()
+-        y = anchor_rect.centery - total_h // 2
+-        if left:
+-            lx = vx = anchor_rect.left
+-        else:
+-            lx = anchor_rect.right - lab.get_width()
+-            vx = anchor_rect.right - val.get_width()
+-
+-        self.screen.blit(lab, (lx, y))
+-        self.screen.blit(val, (vx, y + lab.get_height() + 2))
+-
+-    def _draw_label_value_vstack_center(
+-        self, *, label: str, value: str, anchor_rect: pygame.Rect,
+-        label_color: Tuple[int,int,int] = HUD_LABEL_COLOR,
+-        value_color: Tuple[int,int,int] = HUD_VALUE_COLOR,
+-    ) -> None:
+-        lab = self.draw_text(label, color=label_color, font=self.hud_label_font, shadow=True)
+-        val = self.draw_text(value, color=value_color, font=self.hud_value_font, shadow=True)
+-
+-        gap = 2
+-        total_h = lab.get_height() + gap + val.get_height()
+-        y  = anchor_rect.centery - total_h // 2
+-        lx = anchor_rect.centerx - lab.get_width() // 2
+-        vx = anchor_rect.centerx - val.get_width() // 2
+-
+-        self.screen.blit(lab, (lx, y))
+-        self.screen.blit(val, (vx, y + lab.get_height() + gap))
++        self, *, label: str, value: str, anchor_rect: pygame.Rect,
++        align: str = "left",
++        label_color: Tuple[int,int,int] = HUD_LABEL_COLOR,
++        value_color: Tuple[int,int,int] = HUD_VALUE_COLOR,
++    ) -> None:
++        """Uniwersalny pionowy stos label/value z wyrównaniem: left/center/right."""
++        lab = self.draw_text(label, color=label_color, font=self.hud_label_font, shadow=True)
++        val = self.draw_text(value, color=value_color, font=self.hud_value_font, shadow=True)
++        gap = 2
++        total_h = lab.get_height() + gap + val.get_height()
++        y = anchor_rect.centery - total_h // 2
++        if align == "center":
++            lx = anchor_rect.centerx - lab.get_width() // 2
++            vx = anchor_rect.centerx - val.get_width() // 2
++        elif align == "right":
++            lx = anchor_rect.right - lab.get_width()
++            vx = anchor_rect.right - val.get_width()
++        else:
++            lx = vx = anchor_rect.left
++        self.screen.blit(lab, (lx, y))
++        self.screen.blit(val, (vx, y + lab.get_height() + gap))
+@@
+     def _draw_hud(self) -> None:
+@@
+-        self._draw_label_value_vstack_center(
+-            label="HIGHSCORE",
+-            value=str(self.highscore),
+-            anchor_rect=right_block,
+-            label_color=hs_label_color,          
+-            value_color=HUD_VALUE_COLOR,         
+-        )
++        self._draw_label_value_vstack(
++            label="HIGHSCORE",
++            value=str(self.highscore),
++            anchor_rect=right_block,
++            align="center",
++            label_color=hs_label_color,
++            value_color=HUD_VALUE_COLOR,
++        )
+@@
+         # Bottom timer (only in-game)
+         if self.scene is Scene.GAME:
+             if self.mode is Mode.TIMED:
+                 self.timebar.draw(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
+             elif self.mode is Mode.SPEEDUP and self.target_deadline is not None and self.target_time > 0:
+                 remaining = max(0.0, self.target_deadline - self.now())
+-                ratio = remaining / max(0.001, self.target_time)
++                ratio = remaining / max(0.001, self.target_time)
+                 self.timebar.draw(ratio, f"{remaining:.1f}s")
+@@
+     def _update_ring_rotation_anim(self) -> float:
+         if not self.rot_anim["active"]:
+             return 0.0
+         now = self.now()
+-        t = (now - self.rot_anim["t0"]) / self.rot_anim["dur"]
++        t = (now - self.rot_anim["t0"]) / self.rot_anim["dur"]
+         if t >= 1.0:
+             # finisz: zatwierdź docelowy layout i wyłącz animację
+             self.ring_layout = dict(self.rot_anim["to_layout"])
+             self._recompute_keymap()
+             self.rot_anim["active"] = False
+             self.rot_anim["swapped"] = True
++            # MEMORY + SPIN: pokaż graczowi nowy układ (świeże okno podglądu)
++            if self.level_cfg.memory_mode:
++                self._memory_start_preview(reset_moves=True, force_unhide=True)
+             return 0.0
+         # ease-out dla przyjemnego hamowania
+-        p = self._ease_out_cubic(max(0.0, min(1.0, t)))
++        p = self._ease_out_cubic(clamp01(t))
+         # w połowie obrotu podmień layout (żeby „wymieszać” w locie)
+         if (not self.rot_anim["swapped"]) and t >= self.rot_anim["swap_at"]:
+             self.ring_layout = dict(self.rot_anim["to_layout"])
+             self._recompute_keymap()
+             self.rot_anim["swapped"] = True
+@@
+     def _draw_spawn_animation(self, surface: pygame.Surface, name: str, rect: pygame.Rect) -> None:
+         age = self.now() - self.symbol_spawn_time
+-        t = 0.0 if SYMBOL_ANIM_TIME <= 0 else min(1.0, max(0.0, age / SYMBOL_ANIM_TIME))
++        t = 0.0 if SYMBOL_ANIM_TIME <= 0 else clamp01(age / SYMBOL_ANIM_TIME)
+         eased = 1.0 - (1.0 - t) ** 3
+@@
+         if hasattr(self.fx, "is_exit_active") and self.fx.is_exit_active() and self.exit_dir_pos:
+             t = self.fx.exit_progress()
+             eased2 = self._ease_out_cubic(t)
+@@
+-                target_xy = {
+-                    "TOP":    (cx, cy - r),
+-                    "RIGHT":  (cx + r, cy),
+-                    "LEFT":   (cx - r, cy),
+-                    "BOTTOM": (cx, cy + r),
+-                }[self.exit_dir_pos]
++                target_xy = ring_pos_xy(cx, cy, r)[self.exit_dir_pos]
+@@
+             # zwykła animacja pojawienia (tylko jeśli jest target)
+             if self.target:
+                 self._draw_spawn_animation(self.screen, self.target, base_rect)
+@@
+             elif self.scene is Scene.INSTRUCTION:
+@@
+-                t = (self.now() - getattr(self, "instruction_intro_t", 0.0)) / max(1e-6, getattr(self, "instruction_intro_dur", 0.0))
+-                t = max(0.0, min(1.0, t))
++                t = clamp01((self.now() - getattr(self, "instruction_intro_t", 0.0)) / max(1e-6, getattr(self, "instruction_intro_dur", 0.0)))
+                 alpha = int(255 * (1.0 - self._ease_out_cubic(t)))  # szybki start, miękkie zejście
+                 if alpha > 0:
+                     overlay = pygame.Surface((self.w, self.h))
+                     overlay.set_alpha(alpha)
+                     overlay.fill((0, 0, 0))
+                     self.screen.blit(overlay, (0, 0))
+

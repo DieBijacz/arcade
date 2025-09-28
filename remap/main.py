@@ -34,11 +34,7 @@ class ImageStore:
             self.cache[path] = img
             return img
         except Exception:
-            # Fail silently – caller can draw a vector fallback.
             return None
-
-    def clear(self) -> None:
-        self.cache.clear()
 
 IMAGES = ImageStore()
 
@@ -305,8 +301,6 @@ SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                 # minimalny „dodatkowy” 
 
 # Typography (rozmiary bazowe; w kodzie są skalowane do okna)
 FONT_PATH = str(PKG_DIR / "assets" / "font" / "Orbitron-VariableFont_wght.ttf")
-if not os.path.exists(FONT_PATH):
-    pass
 FONT_SIZE_SMALL = 18
 FONT_SIZE_MID = 24
 FONT_SIZE_BIG = 60
@@ -726,7 +720,7 @@ class TutorialPlayer:
                 if getattr(self, "static_banner", False):
                     y -= g.px(12)
                 tw, th = g.mid.size(self.caption)
-                g.draw_text(g.mid, self.caption, (g.w/2 - tw/2, y), color=ACCENT)
+                g.draw_text(self.caption, pos=(g.w/2 - tw/2, y), font=g.mid, color=ACCENT)
 
 def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
     """Buduje tutorial na podstawie *aktualnej* konfiguracji levelu (modyfikatorów)."""
@@ -1153,8 +1147,6 @@ class InputRing:
     def __init__(self, game: 'Game'):
         self.g = game
 
-    # (helpers unchanged...)
-
     def draw(self, center: tuple[int,int], base_size: int, *, layout: Optional[dict[str,str]] = None, spin_deg: float = 0.0) -> None:
         g = self.g
         cx, cy = center
@@ -1424,7 +1416,7 @@ class Game:
         
         # memory (L5)
         self.memory_show_icons = True
-        self.memory_intro_until = 0.0   # (stare – nie użyjemy już do ukrywania)
+        # (stare – nie użyjemy już do ukrywania)
         self.memory_hide_deadline = 0.0 # nowy: kiedy najpóźniej ukryć ikony (czasowo)
         self.memory_moves_count = 0     # nowy: ile ruchów wykonano zanim znikną
         self.memory_preview_armed = False   # czekaj na „sygnał” (np. koniec bannera), by wystartować odliczanie
@@ -1550,16 +1542,6 @@ class Game:
     def lives_enabled(self) -> bool:
         return int(self.settings.get("lives", MAX_LIVES)) > 0
 
-    def measure_text(self, text: str, *, font: Optional[pygame.font.Font] = None, size_px: Optional[int] = None, scale: float = 1.0) -> tuple[int, int]:
-        if font is None:
-            px = self.px(size_px) if size_px else self.font.get_height()
-            font = self._font(px)
-        surf = font.render(text, True, (255, 255, 255))
-        if scale != 1.0:
-            w, h = surf.get_size()
-            return (max(1, int(w * scale)), max(1, int(h * scale)))
-        return surf.get_size()
-
     def _memory_start_preview(self, *, reset_moves: bool = True, force_unhide: bool = False) -> None:
         if not self.level_cfg.memory_mode:
             return
@@ -1572,9 +1554,6 @@ class Game:
 
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
-    def _ensure_framebuffer(self) -> None:
-        self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-    
     def _compute_ui_scale(self) -> float:
         ref_w, ref_h = 720, 1280
         sx = self.w / ref_w
@@ -1683,7 +1662,7 @@ class Game:
         self.score_capsule_rect.center = (self.w // 2, cy)
 
         self._rescale_background()
-        self._ensure_framebuffer()
+        self.fb = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
         self._rebuild_fonts() 
 
     def _ensure_music(self) -> None:
@@ -1825,9 +1804,6 @@ class Game:
         elif self.scene is Scene.MENU:
             self.open_settings()
 
-    def _settings_clamp(self) -> None:
-        clamp_settings(self.settings)
-
     def settings_adjust(self, delta: int) -> None:
         items = self.settings_items()
         key = items[self.settings_idx][2]
@@ -1883,7 +1859,7 @@ class Game:
 
         cur = self.settings[key]
         self.settings[key] = (cur + (step * delta)) if isinstance(cur, float) else (cur + delta)
-        self._settings_clamp()
+        clamp_settings(self.settings)
 
         if key == "music_volume" and self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
@@ -1898,11 +1874,6 @@ class Game:
                     self.sfx["point"].play()
             except Exception:
                 pass
-
-    def settings_reset_highscore(self) -> None:
-        self.highscore = 0
-        CFG["highscore"] = 0
-        save_config({"highscore": 0})
 
     def open_settings(self) -> None:
         self.settings = make_runtime_settings(CFG)
@@ -1949,19 +1920,6 @@ class Game:
     def settings_cancel(self) -> None:
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
-
-    @staticmethod
-    def _level_modifiers_list(self, L: 'LevelCfg') -> list[str]:
-        mods: list[str] = []
-        if any(s.type is RuleType.MAPPING for s in (L.rules or [])):
-            mods.append("remap")
-        if getattr(L, "rotations_per_level", 0) > 0:
-            mods.append("spin")
-        if getattr(L, "memory_mode", False):
-            mods.append("memory")
-        if getattr(L, "control_flip_lr_ud", False):
-            mods.append("invert")
-        return mods or ["none"]
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
         # wyczyść
@@ -2043,7 +2001,6 @@ class Game:
         # rotacje / memory / instrukcja — jak u Ciebie
         self._plan_rotations_for_level()
         self.memory_show_icons = True
-        self.memory_intro_until = 0.0
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
@@ -2057,8 +2014,7 @@ class Game:
 
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
-            self.memory_intro_until = 0.0
-        
+            
         self._recompute_keymap()
 
     def _plan_rotations_for_level(self) -> None:
@@ -2462,60 +2418,32 @@ class Game:
         sh.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         return sh
 
-    def draw_text(self, *args, **kwargs) -> pygame.Surface:
-        if args and not isinstance(args[0], str):
-            # LEGACY: (font, text, pos, ...)
-            font  = args[0]
-            text  = args[1] if len(args) > 1 else ""
-            pos   = args[2] if len(args) > 2 else None
-            size_px = None
-        else:
-            # NEW: (text, ...)
-            text  = args[0] if args else ""
-            pos   = kwargs.get("pos", None)
-            font  = kwargs.get("font", None)
-            size_px = kwargs.get("size_px", None)
-
-        color         = kwargs.get("color", INK)
-        shadow        = kwargs.get("shadow", True)
-        glitch        = kwargs.get("glitch", True)
-        scale         = float(kwargs.get("scale", 1.0))
-        alpha         = kwargs.get("alpha", None)
-        shadow_offset = kwargs.get("shadow_offset", TEXT_SHADOW_OFFSET)
-
-        # --- wybór fontu ---
+    def draw_text(self, text: str, *, pos: Optional[tuple[float,float]] = None,
+                font: Optional[pygame.font.Font] = None, size_px: Optional[int] = None,
+                color=INK, shadow=True, glitch=True, scale: float = 1.0,
+                alpha: Optional[int] = None, shadow_offset=TEXT_SHADOW_OFFSET) -> pygame.Surface:
         if font is None:
             px = self.px(size_px) if size_px else self.font.get_height()
             font = self._font(px)
 
-        # --- tekst (z ewentualnym glitchowaniem) ---
-        render_text = text
-        if glitch and self.fx.is_text_glitch_active():
-            render_text = self._glitch_text(text)
-
+        render_text = self._glitch_text(text) if (glitch and self.fx.is_text_glitch_active()) else text
         base = font.render(render_text, True, color)
 
-        # --- skalowanie (jeśli trzeba) ---
         if scale != 1.0:
             bw, bh = base.get_size()
-            base = pygame.transform.smoothscale(base, (max(1, int(bw * scale)), max(1, int(bh * scale))))
+            base = pygame.transform.smoothscale(base, (max(1, int(bw*scale)), max(1, int(bh*scale))))
 
-        # --- cień (z użyciem istniejącego helpera) ---
         out = base
         if shadow:
             dx, dy = shadow_offset
             sh = self._shadow_text(base)
-            out_w = base.get_width() + max(0, int(dx))
-            out_h = base.get_height() + max(0, int(dy))
-            surf = pygame.Surface((out_w, out_h), pygame.SRCALPHA)
-            surf.blit(sh, (int(dx), int(dy)))
-            surf.blit(base, (0, 0))
+            surf = pygame.Surface((base.get_width()+max(0,int(dx)), base.get_height()+max(0,int(dy))), pygame.SRCALPHA)
+            surf.blit(sh, (int(dx), int(dy))); surf.blit(base, (0, 0))
             out = surf
 
         if alpha is not None:
             out.set_alpha(alpha)
 
-        # --- opcjonalny blit ---
         if pos is not None:
             x, y = pos
             self.screen.blit(out, (int(x), int(y)))
@@ -2750,58 +2678,6 @@ class Game:
             surf = pygame.Surface((rw, rh), pygame.SRCALPHA)
             pygame.draw.rect(surf, (color[0], color[1], color[2], alpha), surf.get_rect(), border_radius=max(8, int(rh*0.45)))
             self.screen.blit(surf, (cx - rw//2, cy - rh//2), special_flags=pygame.BLEND_PREMULTIPLIED)
-
-    def _draw_title_remap(self, y: int) -> pygame.Rect:
-        title = "REMAP"
-        # pomiar bazowy – cały napis w jednej sztuce, żeby dobrać wysokość
-        base_surf = self.big.render(title, True, MENU_TITLE_PRIMARY_COLOR)
-        base_w, base_h = base_surf.get_size()
-
-        # rozbijamy na 'RE' + 'MP', a w miejscu 'A' wstawimy trójkąt
-        left_text = "RE"
-        right_text = "MP"
-        left_surf  = self.big.render(left_text, True, MENU_TITLE_PRIMARY_COLOR)
-        right_surf = self.big.render(right_text, True, MENU_TITLE_PRIMARY_COLOR)
-        lh = left_surf.get_height()
-        rh = right_surf.get_height()
-        H = max(lh, rh)  # docelowa „wysokość linii”
-
-        # szerokość „A” szacujemy z szerokości całego wyrazu – to da naturalny kerning
-        # (prosto: przyjmijmy, że 'A' to 0.8 wysokości kwadrat na trójkąt)
-        tri_h = int(H * MENU_TITLE_TRIANGLE_SCALE)
-        tri_w = int(tri_h * 0.9)
-
-        # tracking – odrobina powietrza pomiędzy segmentami
-        gap = int(self.w * MENU_TITLE_LETTER_SPACING)
-
-        total_w = left_surf.get_width() + gap + tri_w + gap + right_surf.get_width()
-        x = (self.w - total_w) // 2
-
-        # NEON: delikatny „świetlik” za wszystkimi elementami
-        neon_rect = pygame.Rect(x - self.px(10), y - self.px(6), total_w + self.px(20), H + self.px(12))
-        self._draw_neon_pill(neon_rect, MENU_TITLE_NEON_COLOR, MENU_TITLE_NEON_LAYERS, MENU_TITLE_NEON_SCALE_STEP)
-
-        # LEWA część
-        self.screen.blit(self._shadow_text(left_surf), (x + 2, y + 2))
-        self.screen.blit(left_surf, (x, y))
-        x += left_surf.get_width() + gap
-
-        # TRÓJKĄT zamiast „A”
-        tri_rect = pygame.Rect(0, 0, tri_w, tri_h)
-        tri_rect.midbottom = (x + tri_w//2, y + H)  # osadź „na baseline”
-        # rysunek wektorowy (spójny z symbolami)
-        thickness = max(2, int(SYMBOL_DRAW_THICKNESS * (H / self.big.get_height())))
-        a = (tri_rect.centerx, tri_rect.top)
-        b = (tri_rect.left, tri_rect.bottom)
-        c = (tri_rect.right, tri_rect.bottom)
-        pygame.draw.polygon(self.screen, MENU_TITLE_TRIANGLE_COLOR, [a, b, c], thickness)
-        x += tri_w + gap
-
-        # PRAWA część
-        self.screen.blit(self._shadow_text(right_surf), (x + 2, y + 2))
-        self.screen.blit(right_surf, (x, y))
-
-        return pygame.Rect(neon_rect)
 
     def draw_arrow(self, surface: pygame.Surface, rect: pygame.Rect, color=RULE_ARROW_COLOR, width=RULE_ARROW_W) -> None:
         path = self.cfg.get("images", {}).get("arrow")
@@ -3385,7 +3261,7 @@ class Game:
                 hf = self.font
                 hw, hh = hf.size(hint)
                 bottom_gap = self.px(24)
-                self.draw_text(hf, hint, (self.w/2 - hw/2, self.h - bottom_gap - hh//4), color=(210, 220, 235))
+                self.draw_text(hint, pos=(self.w/2 - hw/2, self.h - bottom_gap - hh//4), font=hf, color=(210, 220, 235))
 
             elif self.scene is Scene.OVER:
                 # Minimalny ekran końcowy: TOTAL + formuła + opcjonalny badge
@@ -3411,9 +3287,9 @@ class Game:
                 formula = f"{self.score} + {self.best_streak} streak"
                 fw, fh = self.mid.size(formula)
                 self.draw_text(
-                    self.mid, formula,
-                    (cx - fw // 2, cy + total_surf.get_height() // 2 + self.px(8)),
-                    color=ACCENT, shadow=True, glitch=False
+                    formula,
+                    pos=(cx - fw // 2, cy + total_surf.get_height() // 2 + self.px(8)),
+                    font=self.mid, color=ACCENT, shadow=True, glitch=False
                 )
 
                 # 3) Badge NEW BEST! jeśli pobity rekord
@@ -3432,21 +3308,21 @@ class Game:
                 info_text = "SPACE = play again   ·   ESC = quit"
                 iw, ih = self.font.size(info_text)
                 self.draw_text(
-                    self.font, info_text,
-                    (cx - iw // 2, self.h - ih - self.px(24)),
-                    color=(210, 220, 235), shadow=True, glitch=False
+                    info_text,
+                    pos=(cx - iw // 2, self.h - ih - self.px(24)),
+                    font=self.font, color=(210, 220, 235), shadow=True, glitch=False
                 )
 
             elif self.scene is Scene.SETTINGS:
                 self._blit_bg()
                 title_text = "Settings"
                 tw, th = self.big.size(title_text)
-                self.draw_text(self.big, title_text, (self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR))
+                self.draw_text(title_text, pos=(self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR), font=self.big)
 
                 top_y = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
 
-                help1 = "↑/↓ select · ←/→ adjust · PageUp/PageDown scroll · R reset high score"
-                help2 = "ENTER save · ESC back · MouseWheel scroll"
+                help1 = "↑/↓ select · ←/→ adjust"
+                help2 = "ENTER save · ESC back"
                 help_margin = self.px(SETTINGS_HELP_MARGIN_TOP)
                 help_gap    = self.px(SETTINGS_HELP_GAP)
                 w1, h1 = self.font.size(help1)
@@ -3498,8 +3374,8 @@ class Game:
                 self.screen.set_clip(prev_clip)
 
                 base_y = self.h - (h1 + help_gap + h2) - self.px(14)
-                self.draw_text(self.font, help1, (self.w/2 - w1/2, base_y))
-                self.draw_text(self.font, help2, (self.w/2 - w2/2, base_y + h1 + help_gap))
+                self.draw_text(help1, pos=(self.w/2 - w1/2, base_y), font=self.font)
+                self.draw_text(help2, pos=(self.w/2 - w2/2, base_y + h1 + help_gap), font=self.font)
 
             elif self.scene is Scene.INSTRUCTION:
                 # najpierw tutorial (ring + animacje)
@@ -3510,15 +3386,14 @@ class Game:
                 title = self.instruction_text or f"LEVEL {self.level}"
                 tw, th = self.big.size(title)
                 title_y = int(self.h * 0.14)
-                self.draw_text(self.big, title, (self.w/2 - tw/2, title_y))
+                self.draw_text(title, pos=(self.w/2 - tw/2, title_y), font=self.big)
 
                 # --- CAPTION POD TYTUŁEM (np. "Follow remap") ---
                 if self.tutorial and getattr(self.tutorial, "caption", ""):
                     cap = self.tutorial.caption
                     cw, ch = self.mid.size(cap)
                     cap_margin = self.px(8)
-                    self.draw_text(self.mid, cap, (self.w/2 - cw/2, title_y + th + cap_margin), color=ACCENT)
-                    # nie rysuj już captionu w TutorialPlayerze (nad ringiem)
+                    self.draw_text(cap, pos=(self.w/2 - cw/2, title_y + th + cap_margin), font=self.mid, color=ACCENT)
                     self.tutorial.show_caption = False
 
                 # --- HINT w prawym dolnym rogu ---

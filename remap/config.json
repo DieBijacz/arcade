@@ -9,14 +9,14 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      626,
-      1113
+      770,
+      1369
     ]
   },
   "speedup": {
-    "target_time_initial": 9.699999999999982,
-    "target_time_min": 0.30000000000000004,
-    "target_time_step": -0.019999999999999997
+    "target_time_initial": 9.99999999999998,
+    "target_time_min": 1.0000000000000004,
+    "target_time_step": -0.3000000000000001
   },
   "timed": {
     "duration": 60.0,
@@ -51,7 +51,7 @@
   "highscore": 183,
   "levels": {
     "1": {
-      "hits": 5,
+      "hits": 15,
       "color": [
         235,
         235,
@@ -65,7 +65,7 @@
       ]
     },
     "2": {
-      "hits": 5,
+      "hits": 15,
       "color": [
         60,
         200,
