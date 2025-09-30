@@ -277,8 +277,8 @@ OVER_TITLE_OFFSET_Y = -60            # przesunięcie tytułu „GAME OVER”
 OVER_SCORE_GAP1 = -10                # przesunięcie pierwszej linii wyniku
 OVER_SCORE_GAP2 = 26                 # przesunięcie drugiej linii wyniku
 OVER_INFO_GAP = 60                   # odstęp do linii z instrukcją
-SETTINGS_TITLE_Y_FACTOR = 0.10       # pionowe położenie tytułu „Settings”
-SETTINGS_LIST_Y_START_FACTOR = 0.23  # start Y listy opcji
+SETTINGS_TITLE_Y_FACTOR = 0.06      # pionowe położenie tytułu „Settings”
+SETTINGS_LIST_Y_START_FACTOR = 0.16  # start Y listy opcji
 SETTINGS_ITEM_SPACING = 3            # odstęp między wierszami listy
 SETTINGS_HELP_MARGIN_TOP = 18        # margines nad helpem na dole
 SETTINGS_HELP_GAP = 6                # odstęp między wierszami helpu
@@ -1466,6 +1466,7 @@ class Game:
         self.allow_skip_instruction = True
 
         # settings buffer (Settings scene)
+        self.settings_page = 0  
         self.settings_scroll = 0.0
         self._settings_row_tops: List[Tuple[float, float]] = []  # (y, height) bez scrolla
         self.settings_idx = 0
@@ -1476,6 +1477,10 @@ class Game:
         self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
         self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
         self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
+        self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
+        self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))       # +s za poprawną
+        self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))    # -s za złą
+        self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1776,27 +1781,44 @@ class Game:
 # ---- Ustawienia ----
 
     def settings_items(self):
-        items = [
-            ("Initial time",  f"{self.settings['target_time_initial']:.2f}s",    "target_time_initial"),
-            ("Time step",     f"{self.settings['target_time_step']:+.2f}s/hit",  "target_time_step"),
-            ("Minimum time",  f"{self.settings['target_time_min']:.2f}s",        "target_time_min"),
-            ("Lives",         f"{int(self.settings['lives'])}",                  "lives"),
-            ("Music volume",  f"{self.settings['music_volume']:.2f}",            "music_volume"),
-            ("SFX volume",    f"{self.settings['sfx_volume']:.2f}",              "sfx_volume"),
-            ("Fullscreen",    "ON" if self.settings['fullscreen'] else "OFF",    "fullscreen"),
+        items: list[tuple[str, str, Optional[str]]] = []
 
-            # nowe
-            ("Glitch",        self.settings.get('glitch_mode', 'BOTH'),          "glitch_mode"),
-            ("FPS cap",       f"{int(self.settings.get('fps', FPS))}",           "fps"),
-            ("Remap every",   f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits", "remap_every_hits"),
-            ("Spins per lvl", f"{int(self.settings.get('spin_rotations_per_level', 3))}",            "spin_rotations_per_level"),
+        # Pasek widoku (←/→)
+        cur_view = "BASIC" if self.settings_page == 0 else "ADVANCED"
+        items += [("View", cur_view, "settings_page")]
 
-            ("Ring palette",  f"{self.settings['ring_palette']}",                "ring_palette"),
-            ("High score",    f"{self.highscore}",                               "highscore"),
-            ("Rule bonus",    f"{self.settings['timed_rule_bonus']:.1f}s",       "timed_rule_bonus"),
-            ("", "", None),
+        # ===== BASIC =====
+        if self.settings_page == 0:
+            items += [
+                ("— OGÓLNE —", "", None),
+                ("Music volume",  f"{float(self.settings.get('music_volume', CFG['audio']['music_volume'])):.2f}", "music_volume"),
+                ("SFX volume",    f"{float(self.settings.get('sfx_volume',   CFG['audio']['sfx_volume'])):.2f}",   "sfx_volume"),
+                ("Fullscreen",    "ON" if self.settings.get('fullscreen', CFG['display'].get('fullscreen', True)) else "OFF", "fullscreen"),
+                ("Glitch",        self.settings.get('glitch_mode', 'BOTH'), "glitch_mode"),
+                ("FPS cap",       f"{int(self.settings.get('fps', FPS))}",  "fps"),
+                ("Ring palette",  f"{self.settings.get('ring_palette', 'auto')}", "ring_palette"),
+                ("High score",    f"{self.highscore}", "highscore"),
+            ]
+            return items
+
+        # ===== ADVANCED =====  (tylko TIMED + SPEED-UP + separator pod tabelę)
+        items += [
+            ("— TIMED —", "", None),
+            ("Initial time",  f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s",   "timed_duration"),
+            ("On correct",    f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",                 "timed_gain"),
+            ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",              "timed_penalty"),
+            ("Rule bonus",    f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s", "timed_rule_bonus"),
+
+            ("— SPEED-UP —", "", None),
+            ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
+            ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
+            ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
+            ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
+
+            ("", "", None),   # separator przed tabelą
         ]
         return items
+
 
     def settings_move(self, delta: int) -> None:
         items = self.settings_items()
@@ -1844,6 +1866,16 @@ class Game:
         key = items[self.settings_idx][2]
         if key is None:
             return
+
+        if key == "settings_page":
+            self.settings_page = 0 if delta < 0 else 1
+            self.settings_idx = 0
+            self.settings_scroll = 0.0
+            self.settings_focus_table = False
+            self._ensure_selected_visible()
+            self.fx.trigger_glitch(mag=0.95)      
+            self.fx.trigger_text_glitch()       
+            return  
         
         if key == "glitch_mode":
             opts = ["NONE", "TEXT", "SCREEN", "BOTH"]
@@ -1937,6 +1969,9 @@ class Game:
             "music_volume": 0.05,
             "sfx_volume": 0.05,
             "timed_rule_bonus": 0.5,
+            "timed_duration": 1.0,   # NEW
+            "timed_gain": 0.1,       # NEW
+            "timed_penalty": 0.1,    # NEW
         }.get(key, 0.0)
 
         if step == 0.0:
@@ -1945,6 +1980,10 @@ class Game:
         cur = self.settings[key]
         self.settings[key] = (cur + (step * delta)) if isinstance(cur, float) else (cur + delta)
         clamp_settings(self.settings)
+
+        self.settings["timed_duration"] = max(1.0, float(self.settings.get("timed_duration", 60.0)))
+        self.settings["timed_gain"]     = max(0.0, float(self.settings.get("timed_gain", 0.0)))
+        self.settings["timed_penalty"]  = max(0.0, float(self.settings.get("timed_penalty", 0.0)))
 
         if key == "music_volume" and self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
@@ -1962,16 +2001,24 @@ class Game:
 
     def open_settings(self) -> None:
         self.settings = make_runtime_settings(CFG)
+
+        self.settings.setdefault("glitch_mode", "BOTH")
+        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
+        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
+        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
+
+        self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
+        self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))
+        self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))
+        self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
+
         self.settings_idx = 0
-        self.settings_move(0)
+        self.settings_move(0)   
+
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.SETTINGS
         self.settings_scroll = 0.0
         self._ensure_selected_visible()
-        self.settings.setdefault("glitch_mode", "BOTH")  
-        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
-        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
-        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
 
     def settings_save(self) -> None:
         clamp_settings(self.settings)
@@ -1989,6 +2036,13 @@ class Game:
         payload.setdefault("display", {})["fps"] = int(self.settings["fps"])
         payload.setdefault("rules", {})["every_hits"] = int(self.settings["remap_every_hits"])
         payload["rules"]["spin_rotations_per_level"] = int(self.settings["spin_rotations_per_level"])
+
+        payload.setdefault("timed", {})
+        payload["timed"]["duration"]   = float(self.settings.get("timed_duration"))
+        payload["timed"]["gain"]       = float(self.settings.get("timed_gain"))
+        payload["timed"]["penalty"]    = float(self.settings.get("timed_penalty"))
+        payload["timed"]["rule_bonus"] = float(self.settings.get("timed_rule_bonus"))
+
 
         save_config(payload)
 
@@ -2077,7 +2131,7 @@ class Game:
         self.symbol_spawn_time = 0.0
         self.pause_start = 0.0
         self.pause_until = 0.0
-        self.time_left = TIMED_DURATION
+        self.time_left = float(self.settings.get("timed_duration", TIMED_DURATION))
         self._last_tick = self.now()
 
         # ring / remap reset
@@ -2146,7 +2200,7 @@ class Game:
         self.pause_start = now
         self.pause_until = self.banner.active_until
         if self.mode is Mode.TIMED:
-            self.time_left += ADDITIONAL_RULE_TIME 
+            self.time_left += float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
         if self.level_cfg.memory_mode:
             self.memory_preview_armed = True
             self.memory_hide_deadline = 0.0
@@ -2267,10 +2321,11 @@ class Game:
                     else:
                         last_idx = self._last_editable_settings_idx()
                         if self.settings_idx == last_idx:
-                            self.settings_focus_table = True
-                            self.level_table_sel_row = 1
-                            self.level_table_sel_col = 1  # Points required
-                            self._ensure_selected_visible()
+                            if self.settings_page == 1:   
+                                self.settings_focus_table = True
+                                self.level_table_sel_row = 1
+                                self.level_table_sel_col = 1
+                                self._ensure_selected_visible()
                         else:
                             self.settings_move(+1)
                         return
@@ -2347,8 +2402,9 @@ class Game:
             self.hits_in_level += 1
 
             if self.mode is Mode.TIMED:
-                self.time_left += 1.0
-            else:  # SPEEDUP
+                self.time_left += float(self.settings.get("timed_gain", 1.0))
+
+            if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
@@ -2385,7 +2441,7 @@ class Game:
         self.fx.trigger_glitch()
 
         if self.mode is Mode.TIMED:
-            self.time_left -= 1.0
+            self.time_left -= float(self.settings.get("timed_penalty", 1.0))
             if self.time_left <= 0.0:
                 self.time_left = 0.0
                 self.end_game()
@@ -2569,6 +2625,7 @@ class Game:
         text_color=INK,
         *,
         font: Optional[pygame.font.Font] = None,
+        border_w: int = 1,            # << NOWE
     ) -> pygame.Rect:
         fnt = font or self.font
         t_surf = fnt.render(text, True, text_color)
@@ -2576,7 +2633,7 @@ class Game:
 
         chip = pygame.Surface((w, h), pygame.SRCALPHA)
         pygame.draw.rect(chip, bg, chip.get_rect(), border_radius=radius)
-        pygame.draw.rect(chip, border, chip.get_rect(), width=1, border_radius=radius)
+        pygame.draw.rect(chip, border, chip.get_rect(), width=border_w, border_radius=radius)  # << użytkujemy border_w
 
         shadow = pygame.Surface((w, h), pygame.SRCALPHA)
         pygame.draw.rect(shadow, (0, 0, 0, 120), shadow.get_rect(), border_radius=radius + 2)
@@ -3128,7 +3185,8 @@ class Game:
         # Bottom timer (only in-game)
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
-                self.timebar.draw(self.time_left / TIMED_DURATION, f"{self.time_left:.1f}s")
+                tdur = float(self.settings.get("timed_duration", TIMED_DURATION))
+                self.timebar.draw(self.time_left / max(0.001, tdur), f"{self.time_left:.1f}s")
             elif self.mode is Mode.SPEEDUP and self.target_deadline is not None and self.target_time > 0:
                 remaining = max(0.0, self.target_deadline - self.now())
                 ratio = remaining / max(0.001, self.target_time)
@@ -3343,6 +3401,8 @@ class Game:
             elif self.scene is Scene.GAME:
                 self._draw_gameplay()
 
+        #  =================   MENU   =================
+
             elif self.scene is Scene.MENU:
                 self._blit_bg()
                 logo_path = str(PKG_DIR / "assets" / "images" / "logo2.png")
@@ -3385,6 +3445,8 @@ class Game:
                 hw, hh = hf.size(hint)
                 bottom_gap = self.px(24)
                 self.draw_text(hint, pos=(self.w/2 - hw/2, self.h - bottom_gap - hh//4), font=hf, color=(210, 220, 235))
+
+        #  =================   OVER   =================
 
             elif self.scene is Scene.OVER:
                 # Minimalny ekran końcowy: TOTAL + formuła + opcjonalny badge
@@ -3436,20 +3498,50 @@ class Game:
                     font=self.font, color=(210, 220, 235), shadow=True, glitch=False
                 )
 
+        #  =================   SETTING   =================
+
             elif self.scene is Scene.SETTINGS:
                 self._blit_bg()
+
+                # --- Title ---
                 title_text = "Settings"
                 tw, th = self.big.size(title_text)
                 self.draw_text(title_text, pos=(self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR), font=self.big)
 
+                # --- View chips (BASIC / ADVANCED) ---
+                label_basic = "BASIC"
+                label_adv   = "ADVANCED"
+                f = self.font
+                chip_gap = self.px(8)
+                chips_y = int(self.h * SETTINGS_TITLE_Y_FACTOR) + self.big.get_height() + self.px(8)
+
+                def chip(txt, x, active):
+                    pad_x = self.px(10); pad_y = self.px(6)
+                    cw, ch = f.size(txt)
+                    w, h = cw + 2 * pad_x, ch + 2 * pad_y
+                    r = pygame.Rect(x, chips_y, w, h)
+                    bg = (22, 26, 34, 220) if active else (20, 22, 30, 140)
+                    br = (120, 200, 255, 230) if active else (80, 120, 160, 160)
+                    self._draw_round_rect(self.screen, r, bg, border=br, border_w=2, radius=self.px(12))
+                    self.draw_text(txt, pos=(x + pad_x, chips_y + pad_y), font=f, color=INK, shadow=True, glitch=False)
+                    return w
+
+                cx = self.w // 2
+                w1 = f.size(label_basic)[0] + self.px(20)
+                w2 = f.size(label_adv)[0]   + self.px(20)
+                start_x = cx - (w1 + chip_gap + w2) // 2
+                off = chip(label_basic, start_x,              self.settings_page == 0)
+                _   = chip(label_adv,   start_x + off + chip_gap, self.settings_page == 1)
+
+                # --- Layout/viewport for the list below chips ---
                 top_y = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
 
                 help1 = "↑/↓ select · ←/→ adjust"
                 help2 = "ENTER save · ESC back"
                 help_margin = self.px(SETTINGS_HELP_MARGIN_TOP)
                 help_gap    = self.px(SETTINGS_HELP_GAP)
-                w1, h1 = self.font.size(help1)
-                w2, h2 = self.font.size(help2)
+                w1h, h1 = self.font.size(help1)
+                w2h, h2 = self.font.size(help2)
                 help_block_h = help_margin + h1 + help_gap + h2 + self.px(12)
 
                 viewport = pygame.Rect(0, top_y, self.w, max(50, self.h - top_y - help_block_h))
@@ -3459,48 +3551,127 @@ class Game:
                 items = self.settings_items()
                 self._settings_row_tops = []
                 item_spacing = self.px(SETTINGS_ITEM_SPACING)
+
+                SECTION_TITLES = {
+                    "basic_0": "OGÓLNE",
+                    "adv_0":   "TIMED",
+                    "adv_1":   "SPEED-UP",
+                }
+
+                section_labels = []
+                for (label, _value, key) in items:
+                    if key is None:
+                        section_labels.append(label)
+
                 y_probe = top_y
-                for i, (label, value, key) in enumerate(items):
-                    label_surf = self.settings_font.render(label, True, INK if key is not None else ACCENT)
-                    value_surf = self.settings_font.render(value, True, INK if key is not None else ACCENT)
-                    row_h = max(label_surf.get_height(), value_surf.get_height())
-                    self._settings_row_tops.append((y_probe, row_h))
-                    y_probe += row_h + item_spacing
-                list_end_y = y_probe  
+                sec_counter = -1
+                for (label, value, key) in items:
+                    if key is None:
+                        sec_counter += 1
+                        if self.settings_page == 0:
+                            if sec_counter > 0:
+                                continue
+                            t = SECTION_TITLES["basic_0"]
+                        else:
+                            if sec_counter > 1:
+                                continue
+                            t = SECTION_TITLES["adv_0" if sec_counter == 0 else "adv_1"]
+
+                        pad_x = self.px(12); pad_y = self.px(6)
+                        tws, ths = self.settings_font.size(t)
+                        row_h = ths + 2 * pad_y
+                        self._settings_row_tops.append((y_probe, row_h))
+                        y_probe += row_h + item_spacing
+                    else:
+                        if self.settings_page == 0:
+                            pass
+                        else:
+                            pass
+                        # pomiar wysokości label/value
+                        label_surf = self.settings_font.render(label, True, INK)
+                        value_surf = self.settings_font.render(value, True, INK)
+                        row_h = max(label_surf.get_height(), value_surf.get_height())
+                        self._settings_row_tops.append((y_probe, row_h))
+                        y_probe += row_h + item_spacing
+
+                list_end_y = y_probe
 
                 raw_table_h = self._levels_table_height()
-
                 available_h = viewport.height
-
                 scale_for_table = 1.0
-                if raw_table_h > available_h:
+                if self.settings_page == 1 and raw_table_h > available_h:
                     scale_for_table = max(0.55, available_h / raw_table_h)
 
                 table_h = int(raw_table_h * scale_for_table)
                 gap_list_table = self.px(8)
 
-                content_h = (list_end_y - top_y) + gap_list_table + table_h
+                # Całkowita wysokość contentu (dla scrolla)
+                content_h = (list_end_y - top_y)
+                if self.settings_page == 1:
+                    content_h += gap_list_table + table_h
 
                 max_scroll = max(0, content_h - viewport.height)
                 self.settings_scroll = max(0.0, min(float(max_scroll), float(self.settings_scroll)))
 
+                # --- RENDER właściwy: sekcje jako chipy + zwykłe wiersze ---
                 y = top_y - int(self.settings_scroll)
+                sec_counter = -1
+                drawing_adv_section = -1  
 
                 for i, (label, value, key) in enumerate(items):
-                    selected = (i == self.settings_idx and key is not None and not self.settings_focus_table)
+                    if key is None:
+                        sec_counter += 1
+                        if self.settings_page == 0:
+                            if sec_counter > 0:
+                                continue
+                            t = SECTION_TITLES["basic_0"]
+                        else:
+                            if sec_counter > 1:
+                                continue
+                            drawing_adv_section = sec_counter
+                            t = SECTION_TITLES["adv_0" if sec_counter == 0 else "adv_1"]
+
+                        # wycentrowany nagłówek sekcji (chip)
+                        pad_x = self.px(12); pad_y = self.px(6)
+                        tws, ths = self.settings_font.size(t)
+                        w = tws + 2 * pad_x
+                        h = ths + 2 * pad_y
+                        x = self.w // 2 - w // 2
+                        rect = pygame.Rect(int(x), int(y), int(w), int(h))
+                        self._draw_round_rect(self.screen, rect, (22, 26, 34, 220),
+                                            border=(120, 200, 255, 230), border_w=2, radius=self.px(12))
+                        self.draw_text(t, pos=(x + pad_x, y + pad_y),
+                                    font=self.settings_font, color=ACCENT, shadow=True, glitch=False)
+                        y += h + item_spacing
+                        continue
+
+                    if self.settings_page == 0:
+                        pass  
+                    else:
+                        if drawing_adv_section not in (0, 1):
+                            continue
+
+                    selected = (i == self.settings_idx and not self.settings_focus_table)
                     if selected and key == "highscore" and self.highscore != 0:
                         value = "enter to reset"
+
                     row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
                     y += row_h + item_spacing
 
-                table_top = y + gap_list_table
-                self._draw_levels_table(table_top, max_height=available_h, scale_override=scale_for_table)
+                # --- Tabelka (tylko ADVANCED) ---
+                if self.settings_page == 1:
+                    table_top = y + gap_list_table
+                    self._draw_levels_table(table_top, max_height=available_h, scale_override=scale_for_table)
 
+                # przywróć clip
                 self.screen.set_clip(prev_clip)
 
+                # --- Help at bottom ---
                 base_y = self.h - (h1 + help_gap + h2) - self.px(14)
-                self.draw_text(help1, pos=(self.w/2 - w1/2, base_y), font=self.font)
-                self.draw_text(help2, pos=(self.w/2 - w2/2, base_y + h1 + help_gap), font=self.font)
+                self.draw_text(help1, pos=(self.w / 2 - w1h / 2, base_y), font=self.font)
+                self.draw_text(help2, pos=(self.w / 2 - w2h / 2, base_y + h1 + help_gap), font=self.font)
+
+        #  =================   INSTRUCTION   =================
 
             elif self.scene is Scene.INSTRUCTION:
                 # najpierw tutorial (ring + animacje)
