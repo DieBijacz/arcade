@@ -20,7 +20,11 @@
   },
   "timed": {
     "duration": 60.0,
-    "rule_bonus": 0.0
+    "rule_bonus": 0.0,
+    "gain": 1.0,
+    "penalty": 1.0,
+    "difficulty": "MEDIUM",
+    "mod_every_hits": 10
   },
   "rules": {
     "every_hits": 5,
@@ -32,8 +36,8 @@
   "lives": 5,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
-    "music_volume": 0.10000000000000007,
-    "sfx_volume": 0.39999999999999986
+    "music_volume": 0.05000000000000007,
+    "sfx_volume": 0.2999999999999999
   },
   "effects": {
     "glitch_enabled": true,
@@ -145,6 +149,48 @@
       ],
       "mods": [
         "joystick",
+        "—",
+        "—",
+        "—"
+      ]
+    },
+    "8": {
+      "hits": 15,
+      "color": [
+        235,
+        235,
+        235
+      ],
+      "mods": [
+        "—",
+        "—",
+        "—",
+        "—"
+      ]
+    },
+    "9": {
+      "hits": 15,
+      "color": [
+        235,
+        235,
+        235
+      ],
+      "mods": [
+        "—",
+        "—",
+        "—",
+        "—"
+      ]
+    },
+    "10": {
+      "hits": 15,
+      "color": [
+        235,
+        235,
+        235
+      ],
+      "mods": [
+        "—",
         "—",
         "—",
         "—"

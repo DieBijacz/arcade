@@ -1439,9 +1439,13 @@ class Game:
             "from_layout": dict(self.ring_layout),
             "to_layout": dict(self.ring_layout),
 }
+
+        self.timed_active_mods: list[str] = []     # aktualnie aktywne mody w TIMED
+        self.timed_hits_since_roll: int = 0
         
         # memory (L5)
         self.memory_show_icons = True
+
         # (stare – nie użyjemy już do ukrywania)
         self.memory_hide_deadline = 0.0 # nowy: kiedy najpóźniej ukryć ikony (czasowo)
         self.memory_moves_count = 0     # nowy: ile ruchów wykonano zanim znikną
@@ -1481,6 +1485,8 @@ class Game:
         self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))       # +s za poprawną
         self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))    # -s za złą
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
+        self.settings.setdefault("timed_difficulty", "EASY")   
+        self.settings.setdefault("timed_mod_every_hits", 6)    # co ile poprawnych losujemy
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1513,6 +1519,7 @@ class Game:
         self.last_window_size = self.screen.get_size()
 
     def start_game(self) -> None:
+        if self.mode is Mode.TIMED: self._timed_roll_mod()
         self.reset_game_state()
         self._ensure_music()
         if self.music_ok:
@@ -1588,6 +1595,49 @@ class Game:
             self.memory_moves_count = 0
         self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
         self.memory_preview_armed = False
+
+    def _timed_slots(self) -> int:
+        diff = str(self.settings.get("timed_difficulty", "EASY"))
+        return 1 if diff == "EASY" else (2 if diff == "MEDIUM" else 3)
+
+    def _timed_apply_active_mods(self) -> None:
+        mods = set(self.timed_active_mods)
+        self.level_cfg.control_flip_lr_ud = ("joystick" in mods)
+        self._recompute_keymap()
+        self.level_cfg.memory_mode = ("memory" in mods)
+        if "memory" not in mods:
+            self.memory_show_icons = True
+            self.memory_hide_deadline = 0.0
+        if "remap" in mods:
+            if not self.rules.current_mapping:
+                self.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=0)])
+                self.rules.roll_mapping(SYMS)
+                self._start_mapping_banner(from_pinned=False)
+        else:
+            self.rules.install([])
+            self.rules.current_mapping = None
+
+    def _timed_roll_mod(self) -> None:
+        pool = ["remap", "spin", "memory", "joystick"]
+        slots = self._timed_slots()
+
+        if len(self.timed_active_mods) < slots:
+            choices = [m for m in pool if m not in self.timed_active_mods]
+            if choices:
+                pick = random.choice(choices)
+                self.timed_active_mods.append(pick)
+        else:
+            if self.timed_active_mods:
+                old = self.timed_active_mods.pop(0)
+                choices = [m for m in pool if m not in self.timed_active_mods and m != old]
+                self.timed_active_mods.append(random.choice(choices or [old]))
+
+        self._timed_apply_active_mods()
+        if "spin" in self.timed_active_mods:
+            self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+        if "remap" in self.timed_active_mods:
+            self.rules.roll_mapping(SYMS)
+            self._start_mapping_banner(from_pinned=False)
 
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
@@ -1783,7 +1833,6 @@ class Game:
     def settings_items(self):
         items: list[tuple[str, str, Optional[str]]] = []
 
-        # Pasek widoku (←/→)
         cur_view = "BASIC" if self.settings_page == 0 else "ADVANCED"
         items += [("View", cur_view, "settings_page")]
 
@@ -1801,24 +1850,26 @@ class Game:
             ]
             return items
 
-        # ===== ADVANCED =====  (tylko TIMED + SPEED-UP + separator pod tabelę)
+        # ===== ADVANCED ===== 
         items += [
             ("— TIMED —", "", None),
-            ("Initial time",  f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s",   "timed_duration"),
-            ("On correct",    f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",                 "timed_gain"),
-            ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",              "timed_penalty"),
-            ("Rule bonus",    f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s", "timed_rule_bonus"),
+            ("Difficulty",   f"{self.settings.get('timed_difficulty','EASY')}",        "timed_difficulty"),
+            ("New mod every",f"{int(self.settings.get('timed_mod_every_hits',6))} hits","timed_mod_every_hits"),
+            ("Initial time", f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s", "timed_duration"),
+            ("On correct",   f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",               "timed_gain"),
+            ("On wrong",     f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",            "timed_penalty"),
+            ("Rule bonus",   f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s","timed_rule_bonus"),
 
             ("— SPEED-UP —", "", None),
             ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
             ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
             ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
             ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
+            ("Levels active", f"{int(self.levels_active)}", "levels_active"),
 
-            ("", "", None),   # separator przed tabelą
+            ("", "", None),   
         ]
         return items
-
 
     def settings_move(self, delta: int) -> None:
         items = self.settings_items()
@@ -1865,6 +1916,18 @@ class Game:
         items = self.settings_items()
         key = items[self.settings_idx][2]
         if key is None:
+            return
+        
+        if key == "timed_difficulty":
+            opts = ["EASY", "MEDIUM", "HARD"]
+            cur = self.settings.get("timed_difficulty", "EASY")
+            i = (opts.index(cur) + delta) % len(opts)
+            self.settings["timed_difficulty"] = opts[i]
+            return
+
+        if key == "timed_mod_every_hits":
+            v = int(self.settings.get("timed_mod_every_hits", 6)) + delta
+            self.settings["timed_mod_every_hits"] = max(1, min(20, v))
             return
 
         if key == "settings_page":
@@ -2042,7 +2105,8 @@ class Game:
         payload["timed"]["gain"]       = float(self.settings.get("timed_gain"))
         payload["timed"]["penalty"]    = float(self.settings.get("timed_penalty"))
         payload["timed"]["rule_bonus"] = float(self.settings.get("timed_rule_bonus"))
-
+        payload["timed"]["difficulty"] = str(self.settings.get("timed_difficulty"))
+        payload["timed"]["mod_every_hits"] = int(self.settings.get("timed_mod_every_hits"))
 
         save_config(payload)
 
@@ -2133,6 +2197,15 @@ class Game:
         self.pause_until = 0.0
         self.time_left = float(self.settings.get("timed_duration", TIMED_DURATION))
         self._last_tick = self.now()
+        self.timed_active_mods = []
+        self.timed_hits_since_roll = 0
+        self.level_cfg.control_flip_lr_ud = False
+        self.level_cfg.memory_mode = False
+        self.rules.install([]); self.rules.current_mapping = None
+        self._recompute_keymap()
+
+        if self.mode is Mode.TIMED:
+            self._timed_roll_mod()
 
         # ring / remap reset
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
@@ -2402,12 +2475,25 @@ class Game:
             self.hits_in_level += 1
 
             if self.mode is Mode.TIMED:
-                self.time_left += float(self.settings.get("timed_gain", 1.0))
+                self.timed_hits_since_roll += 1
+                every = int(self.settings.get("timed_mod_every_hits", 6))
+                if self.timed_hits_since_roll >= max(1, every):
+                    self.timed_hits_since_roll = 0
+                    self._timed_roll_mod()
 
             if self.mode is Mode.SPEEDUP:
+                if self.rules.on_correct():
+                    self.rules.roll_mapping(SYMS)
+                    self._start_mapping_banner(from_pinned=True)
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
+            
+            if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
+                self.level_up()
+                if self.scene is Scene.INSTRUCTION:
+                    self._lock_inputs()
+                    return
 
             # cykliczny remap (baner)
             if self.rules.on_correct():
@@ -3511,26 +3597,26 @@ class Game:
                 # --- View chips (BASIC / ADVANCED) ---
                 label_basic = "BASIC"
                 label_adv   = "ADVANCED"
-                f = self.font
+                f = self.settings_font                               
                 chip_gap = self.px(8)
-                chips_y = int(self.h * SETTINGS_TITLE_Y_FACTOR) + self.big.get_height() + self.px(8)
+                chips_y = int(self.h * SETTINGS_TITLE_Y_FACTOR) + self.big.get_height() + self.px(10)
 
                 def chip(txt, x, active):
-                    pad_x = self.px(10); pad_y = self.px(6)
+                    pad_x = self.px(12); pad_y = self.px(6)
                     cw, ch = f.size(txt)
                     w, h = cw + 2 * pad_x, ch + 2 * pad_y
                     r = pygame.Rect(x, chips_y, w, h)
                     bg = (22, 26, 34, 220) if active else (20, 22, 30, 140)
                     br = (120, 200, 255, 230) if active else (80, 120, 160, 160)
                     self._draw_round_rect(self.screen, r, bg, border=br, border_w=2, radius=self.px(12))
-                    self.draw_text(txt, pos=(x + pad_x, chips_y + pad_y), font=f, color=INK, shadow=True, glitch=False)
+                    self.draw_text(txt, pos=(x + pad_x, chips_y + pad_y), font=f, color=ACCENT, shadow=True, glitch=False)
                     return w
 
                 cx = self.w // 2
-                w1 = f.size(label_basic)[0] + self.px(20)
-                w2 = f.size(label_adv)[0]   + self.px(20)
+                w1 = f.size(label_basic)[0] + self.px(24)
+                w2 = f.size(label_adv)[0]   + self.px(24)
                 start_x = cx - (w1 + chip_gap + w2) // 2
-                off = chip(label_basic, start_x,              self.settings_page == 0)
+                off = chip(label_basic, start_x,                  self.settings_page == 0)
                 _   = chip(label_adv,   start_x + off + chip_gap, self.settings_page == 1)
 
                 # --- Layout/viewport for the list below chips ---
@@ -3658,8 +3744,8 @@ class Game:
                     row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
                     y += row_h + item_spacing
 
-                # --- Tabelka (tylko ADVANCED) ---
-                if self.settings_page == 1:
+                # --- Tabelka (tylko ADVANCED i tylko dla trybu SPEED-UP) ---
+                if self.settings_page == 1 and self.mode is Mode.SPEEDUP:
                     table_top = y + gap_list_table
                     self._draw_levels_table(table_top, max_height=available_h, scale_override=scale_for_table)
 
