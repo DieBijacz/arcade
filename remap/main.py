@@ -1487,6 +1487,7 @@ class Game:
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
         self.settings.setdefault("timed_difficulty", "EASY")   
         self.settings.setdefault("timed_mod_every_hits", 6)    # co ile poprawnych losujemy
+        self.settings.setdefault("timed_mod_every_hits",int(CFG.get("timed", {}).get("mod_every_hits", 6)))
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1503,14 +1504,22 @@ class Game:
         self._ensure_music()
 
         # --- SFX ---
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()           
+            pygame.mixer.set_num_channels(16) 
+        except Exception:
+            pass
+
+        # --- SFX ---
         self.sfx = {}
         try:
-            self.sfx["point"]  = pygame.mixer.Sound("assets/sfx/sfx_point.wav")
-            self.sfx["wrong"]  = pygame.mixer.Sound("assets/sfx/sfx_wrong.wav")
-            self.sfx["glitch"] = pygame.mixer.Sound("assets/sfx/sfx_glitch.wav")
+            sfx_dir = PKG_DIR / "assets" / "sfx"
+            self.sfx["point"]  = pygame.mixer.Sound(str(sfx_dir / "sfx_point.wav"))
+            self.sfx["wrong"]  = pygame.mixer.Sound(str(sfx_dir / "sfx_wrong.wav"))
+            self.sfx["glitch"] = pygame.mixer.Sound(str(sfx_dir / "sfx_glitch.wav"))
 
-            # USTAWIENIE GŁOŚNOŚCI SFX (to o co pytasz)
-            sfx_vol = float(CFG["audio"]["sfx_volume"])
+            sfx_vol = float(self.settings.get("sfx_volume", CFG["audio"]["sfx_volume"]))
             for s in self.sfx.values():
                 s.set_volume(sfx_vol)
         except Exception:
@@ -1864,6 +1873,8 @@ class Game:
             ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
             ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
             ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
+            ("Remap every",  f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits", "remap_every_hits"),
+            ("Rotations/level", f"{int(self.settings.get('spin_rotations_per_level', 3))}", "spin_rotations_per_level"),
             ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
             ("Levels active", f"{int(self.levels_active)}", "levels_active"),
 
@@ -2101,12 +2112,12 @@ class Game:
         payload["rules"]["spin_rotations_per_level"] = int(self.settings["spin_rotations_per_level"])
 
         payload.setdefault("timed", {})
-        payload["timed"]["duration"]   = float(self.settings.get("timed_duration"))
-        payload["timed"]["gain"]       = float(self.settings.get("timed_gain"))
-        payload["timed"]["penalty"]    = float(self.settings.get("timed_penalty"))
-        payload["timed"]["rule_bonus"] = float(self.settings.get("timed_rule_bonus"))
-        payload["timed"]["difficulty"] = str(self.settings.get("timed_difficulty"))
-        payload["timed"]["mod_every_hits"] = int(self.settings.get("timed_mod_every_hits"))
+        payload["timed"]["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
+        payload["timed"]["gain"]            = float(self.settings.get("timed_gain",       1.0))
+        payload["timed"]["penalty"]         = float(self.settings.get("timed_penalty",    1.0))
+        payload["timed"]["rule_bonus"]      = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
+        payload["timed"]["difficulty"]      = str(self.settings.get("timed_difficulty",   "EASY"))
+        payload["timed"]["mod_every_hits"]  = int(self.settings.get("timed_mod_every_hits", 6))
 
         save_config(payload)
 
@@ -3597,30 +3608,54 @@ class Game:
                 # --- View chips (BASIC / ADVANCED) ---
                 label_basic = "BASIC"
                 label_adv   = "ADVANCED"
-                f = self.settings_font                               
+                f = self.settings_font
                 chip_gap = self.px(8)
                 chips_y = int(self.h * SETTINGS_TITLE_Y_FACTOR) + self.big.get_height() + self.px(10)
 
-                def chip(txt, x, active):
+                # Kursor stoi "na przełączniku", gdy zaznaczony jest ukryty wiersz settings_page (idx==0)
+                selected_on_switch = (not self.settings_focus_table and self.settings_idx == 0)
+
+                def chip(txt, x, active, hover=False):
                     pad_x = self.px(12); pad_y = self.px(6)
                     cw, ch = f.size(txt)
                     w, h = cw + 2 * pad_x, ch + 2 * pad_y
-                    r = pygame.Rect(x, chips_y, w, h)
-                    bg = (22, 26, 34, 220) if active else (20, 22, 30, 140)
-                    br = (120, 200, 255, 230) if active else (80, 120, 160, 160)
+
+                    # efekt "hover": lekka skala i jaśniejsze tło/obramowanie
+                    scale = 1.06 if hover else 1.0
+                    scaled_w = int(w * scale)
+                    scaled_h = int(h * scale)
+                    draw_x = int(x - (scaled_w - w) / 2)   # utrzymaj wycentrowanie po skalowaniu
+                    draw_y = int(chips_y - (scaled_h - h) / 2)
+
+                    bg = (26, 30, 38, 240) if (active or hover) else (20, 22, 30, 160)
+                    br = (140, 220, 255, 235) if (active or hover) else (80, 120, 160, 160)
+
+                    r = pygame.Rect(draw_x, draw_y, scaled_w, scaled_h)
                     self._draw_round_rect(self.screen, r, bg, border=br, border_w=2, radius=self.px(12))
-                    self.draw_text(txt, pos=(x + pad_x, chips_y + pad_y), font=f, color=ACCENT, shadow=True, glitch=False)
-                    return w
+
+                    # tekst nie skalowany (czytelność), wycentrowany w powiększonym kapslu
+                    self.draw_text(
+                        txt,
+                        pos=(draw_x + (scaled_w - cw)//2, draw_y + (scaled_h - ch)//2),
+                        font=f, color=ACCENT, shadow=True, glitch=False
+                    )
+                    return scaled_w
 
                 cx = self.w // 2
                 w1 = f.size(label_basic)[0] + self.px(24)
                 w2 = f.size(label_adv)[0]   + self.px(24)
                 start_x = cx - (w1 + chip_gap + w2) // 2
-                off = chip(label_basic, start_x,                  self.settings_page == 0)
-                _   = chip(label_adv,   start_x + off + chip_gap, self.settings_page == 1)
+
+                off = chip(label_basic, start_x,
+                           active=(self.settings_page == 0),
+                           hover=selected_on_switch)
+                _   = chip(label_adv,   start_x + off + chip_gap,
+                           active=(self.settings_page == 1),
+                           hover=selected_on_switch)
 
                 # --- Layout/viewport for the list below chips ---
                 top_y = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
+                top_y += self.px(18)
 
                 help1 = "↑/↓ select · ←/→ adjust"
                 help2 = "ENTER save · ESC back"
@@ -3644,14 +3679,12 @@ class Game:
                     "adv_1":   "SPEED-UP",
                 }
 
-                section_labels = []
-                for (label, _value, key) in items:
-                    if key is None:
-                        section_labels.append(label)
-
+                # --- POMIAR wysokości (scroll) — pomijamy settings_page ---
                 y_probe = top_y
                 sec_counter = -1
                 for (label, value, key) in items:
+                    if key == "settings_page":
+                        continue  # selektor widoku nie jest rysowany jako wiersz
                     if key is None:
                         sec_counter += 1
                         if self.settings_page == 0:
@@ -3669,11 +3702,6 @@ class Game:
                         self._settings_row_tops.append((y_probe, row_h))
                         y_probe += row_h + item_spacing
                     else:
-                        if self.settings_page == 0:
-                            pass
-                        else:
-                            pass
-                        # pomiar wysokości label/value
                         label_surf = self.settings_font.render(label, True, INK)
                         value_surf = self.settings_font.render(value, True, INK)
                         row_h = max(label_surf.get_height(), value_surf.get_height())
@@ -3682,6 +3710,7 @@ class Game:
 
                 list_end_y = y_probe
 
+                # Tabela leveli — może wymagać skalowania pionowego
                 raw_table_h = self._levels_table_height()
                 available_h = viewport.height
                 scale_for_table = 1.0
@@ -3699,12 +3728,16 @@ class Game:
                 max_scroll = max(0, content_h - viewport.height)
                 self.settings_scroll = max(0.0, min(float(max_scroll), float(self.settings_scroll)))
 
-                # --- RENDER właściwy: sekcje jako chipy + zwykłe wiersze ---
+                # --- RENDER listy — pomijamy settings_page, selekcja wiersza 0 "odbiła" się na chipach ---
                 y = top_y - int(self.settings_scroll)
                 sec_counter = -1
-                drawing_adv_section = -1  
+                drawing_adv_section = -1
 
                 for i, (label, value, key) in enumerate(items):
+                    if key == "settings_page":
+                        # nie rysujemy wiersza – informacja o selekcji pokazana na chipach
+                        continue
+
                     if key is None:
                         sec_counter += 1
                         if self.settings_page == 0:
@@ -3725,17 +3758,14 @@ class Game:
                         x = self.w // 2 - w // 2
                         rect = pygame.Rect(int(x), int(y), int(w), int(h))
                         self._draw_round_rect(self.screen, rect, (22, 26, 34, 220),
-                                            border=(120, 200, 255, 230), border_w=2, radius=self.px(12))
+                                              border=(120, 200, 255, 230), border_w=2, radius=self.px(12))
                         self.draw_text(t, pos=(x + pad_x, y + pad_y),
-                                    font=self.settings_font, color=ACCENT, shadow=True, glitch=False)
+                                       font=self.settings_font, color=ACCENT, shadow=True, glitch=False)
                         y += h + item_spacing
                         continue
 
-                    if self.settings_page == 0:
-                        pass  
-                    else:
-                        if drawing_adv_section not in (0, 1):
-                            continue
+                    if self.settings_page == 1 and drawing_adv_section not in (0, 1):
+                        continue
 
                     selected = (i == self.settings_idx and not self.settings_focus_table)
                     if selected and key == "highscore" and self.highscore != 0:

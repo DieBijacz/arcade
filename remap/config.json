@@ -23,8 +23,8 @@
     "rule_bonus": 0.0,
     "gain": 1.0,
     "penalty": 1.0,
-    "difficulty": "MEDIUM",
-    "mod_every_hits": 10
+    "difficulty": "EASY",
+    "mod_every_hits": 8
   },
   "rules": {
     "every_hits": 5,
