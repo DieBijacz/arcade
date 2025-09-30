@@ -359,6 +359,12 @@ class Scene(Enum):
     SETTINGS = auto()
     INSTRUCTION = auto()
 
+class GlitchMode(str, Enum):
+    NONE   = "NONE"
+    TEXT   = "TEXT"
+    SCREEN = "SCREEN"
+    BOTH   = "BOTH"
+
 class RuleType(Enum):
     MAPPING = auto()   # „A ⇒ B” (baner NEW RULE)
 
@@ -876,12 +882,14 @@ class BannerManager:
 
 # ========= FX MANAGER =========
 class EffectsManager:
-    def __init__(self, now_fn, *, glitch_enabled: bool = True):
+    def __init__(self, now_fn, *, glitch_mode: GlitchMode = GlitchMode.BOTH):
         import random as _rand
         self._rand = _rand
         self.now = now_fn
-        # flags
-        self.enabled = bool(glitch_enabled)
+
+        # flags wynikające z trybu
+        self.screen_glitch = glitch_mode in (GlitchMode.SCREEN, GlitchMode.BOTH)
+        self.text_glitch   = glitch_mode in (GlitchMode.TEXT,   GlitchMode.BOTH)
 
         # shake
         self.shake_start = 0.0
@@ -900,16 +908,16 @@ class EffectsManager:
         self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0), 'timer': (0.0, 0.0) }
         self._ring_pulses: dict[str, tuple[float, float]] = {}
 
-        # exit slide (po poprawnej odpowiedzi)
+        # exit slide
         self.exit_active = False
         self.exit_start = 0.0
         self.exit_symbol: Optional[str] = None
         self.exit_duration = EXIT_SLIDE_SEC
 
-    # -------- cfg / reset --------
-    def set_enabled(self, on: bool):
-        self.enabled = bool(on)
-        if not self.enabled:
+    def set_glitch_mode(self, mode: GlitchMode):
+        self.screen_glitch = mode in (GlitchMode.SCREEN, GlitchMode.BOTH)
+        self.text_glitch   = mode in (GlitchMode.TEXT,   GlitchMode.BOTH)
+        if not self.screen_glitch:
             self.clear_transients()
 
     def clear_transients(self):
@@ -926,7 +934,7 @@ class EffectsManager:
         self.shake_until = now + max(0.01, duration)
 
     def trigger_glitch(self, *, mag: float = 1.0, duration: float = GLITCH_DURATION):
-        if not self.enabled:
+        if not self.screen_glitch:
             return
         now = self.now()
         self.glitch_mag = max(0.0, mag)
@@ -937,21 +945,21 @@ class EffectsManager:
             self.trigger_text_glitch()
 
     def trigger_text_glitch(self, duration: float = TEXT_GLITCH_DURATION):
-        if not self.enabled:
+        if not self.text_glitch:
             return
         now = self.now()
         self.text_glitch_active_until = now + max(0.05, duration)
         self.next_text_glitch_at = now + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
 
     def maybe_schedule_text_glitch(self):
-        if not self.enabled:
+        if not self.text_glitch:
             return
         now = self.now()
         if now >= self.next_text_glitch_at and not self.is_text_glitch_active():
             self.trigger_text_glitch()
 
     def is_text_glitch_active(self) -> bool:
-        return self.enabled and (self.now() < self.text_glitch_active_until)
+        return self.text_glitch and (self.now() < self.text_glitch_active_until)
 
     def trigger_pulse(self, kind: str, duration: float | None = None):
         if kind not in self._pulses:
@@ -1026,7 +1034,7 @@ class EffectsManager:
 
     # -------- post-process glitch --------
     def apply_postprocess(self, frame: pygame.Surface, w: int, h: int) -> pygame.Surface:
-        if not self.enabled: return frame
+        if not self.screen_glitch: return frame
         now = self.now()
         if now >= self.glitch_active_until: return frame
 
@@ -1463,12 +1471,18 @@ class Game:
         self.settings_idx = 0
         self.settings = make_runtime_settings(CFG)
 
+        # domyślne wartości wymagane od startu gry
+        self.settings.setdefault("glitch_mode", "BOTH")  # NONE | TEXT | SCREEN | BOTH
+        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
+        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
+        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
+
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
         self.level_table_sel_col = 1          
 
         # effects
-        self.fx = EffectsManager(self.now, glitch_enabled=self.settings.get("glitch_enabled", True))
+        self.fx = EffectsManager(self.now, glitch_mode=GlitchMode(self.settings.get("glitch_mode", "BOTH")))
         self.exit_dir_pos: Optional[str] = None  # "TOP"|"RIGHT"|"LEFT"|"BOTTOM"
         self.instruction_intro_t = 0.0
         self.instruction_intro_dur = 0.0
@@ -1763,22 +1777,25 @@ class Game:
 
     def settings_items(self):
         items = [
-            ("Initial time", f"{self.settings['target_time_initial']:.2f}s", "target_time_initial"),
-            ("Time step", f"{self.settings['target_time_step']:+.2f}s/hit", "target_time_step"),
-            ("Minimum time", f"{self.settings['target_time_min']:.2f}s", "target_time_min"),
-            ("Lives", f"{int(self.settings['lives'])}", "lives"),
-            ("Music volume", f"{self.settings['music_volume']:.2f}", "music_volume"),
-            ("SFX volume",   f"{self.settings['sfx_volume']:.2f}",   "sfx_volume"),
-            ("Fullscreen", "ON" if self.settings['fullscreen'] else "OFF", "fullscreen"),
-            ("Glitch", "ON" if self.settings.get('glitch_enabled', True) else "OFF", "glitch_enabled"),
-            ("Ring palette", f"{self.settings['ring_palette']}", "ring_palette"),
-            ("High score", f"{self.highscore}", None),
-            ("Reset high score", "PRESS \u2190/\u2192", "highscore_reset"),
-            ("Rule bonus", f"{self.settings['timed_rule_bonus']:.1f}s", "timed_rule_bonus"),
-            ("Levels available", f"{int(self.levels_active)}", "levels_active"),
-            ("", "", None),  
-        ]
+            ("Initial time",  f"{self.settings['target_time_initial']:.2f}s",    "target_time_initial"),
+            ("Time step",     f"{self.settings['target_time_step']:+.2f}s/hit",  "target_time_step"),
+            ("Minimum time",  f"{self.settings['target_time_min']:.2f}s",        "target_time_min"),
+            ("Lives",         f"{int(self.settings['lives'])}",                  "lives"),
+            ("Music volume",  f"{self.settings['music_volume']:.2f}",            "music_volume"),
+            ("SFX volume",    f"{self.settings['sfx_volume']:.2f}",              "sfx_volume"),
+            ("Fullscreen",    "ON" if self.settings['fullscreen'] else "OFF",    "fullscreen"),
 
+            # nowe
+            ("Glitch",        self.settings.get('glitch_mode', 'BOTH'),          "glitch_mode"),
+            ("FPS cap",       f"{int(self.settings.get('fps', FPS))}",           "fps"),
+            ("Remap every",   f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits", "remap_every_hits"),
+            ("Spins per lvl", f"{int(self.settings.get('spin_rotations_per_level', 3))}",            "spin_rotations_per_level"),
+
+            ("Ring palette",  f"{self.settings['ring_palette']}",                "ring_palette"),
+            ("High score",    f"{self.highscore}",                               "highscore"),
+            ("Rule bonus",    f"{self.settings['timed_rule_bonus']:.1f}s",       "timed_rule_bonus"),
+            ("", "", None),
+        ]
         return items
 
     def settings_move(self, delta: int) -> None:
@@ -1825,8 +1842,47 @@ class Game:
     def settings_adjust(self, delta: int) -> None:
         items = self.settings_items()
         key = items[self.settings_idx][2]
-
         if key is None:
+            return
+        
+        if key == "glitch_mode":
+            opts = ["NONE", "TEXT", "SCREEN", "BOTH"]
+            cur = self.settings.get("glitch_mode", "BOTH")
+            i = (opts.index(cur) + delta) % len(opts)
+            val = opts[i]
+            self.settings["glitch_mode"] = val
+            # zastosuj od razu
+            self.fx.set_glitch_mode(GlitchMode(val))
+            return
+
+        if key == "fps":
+            caps = [30, 45, 60, 90, 120]
+            cur  = int(self.settings.get("fps", FPS))
+            try: i = caps.index(cur)
+            except ValueError: i = 2
+            i = (i + delta) % len(caps)
+            self.settings["fps"] = int(caps[i])
+            return
+
+        if key == "ring_palette":
+            opts = ["auto", "clean-white", "electric-blue", "neon-cyan", "violet-neon", "magenta"]
+            cur = self.settings.get("ring_palette", "auto")
+            i = (opts.index(cur) + delta) % len(opts)
+            self.settings["ring_palette"] = opts[i]
+            return
+
+        if key == "remap_every_hits":
+            v = int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)) + delta
+            v = max(1, min(10, v))
+            self.settings["remap_every_hits"] = v
+            if hasattr(self, "rules"):
+                self.rules.mapping_every_hits = int(v)
+            return
+
+        if key == "spin_rotations_per_level":
+            v = int(self.settings.get("spin_rotations_per_level", 3)) + delta
+            v = max(0, min(5, v))
+            self.settings["spin_rotations_per_level"] = v
             return
         
         if key == "ring_palette":
@@ -1858,17 +1914,6 @@ class Game:
             self._set_display_mode(bool(self.settings["fullscreen"]))
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
-            return
-        
-        if key == "glitch_enabled":
-            self.settings["glitch_enabled"] = not bool(self.settings.get("glitch_enabled", True))
-            self.fx.set_enabled(bool(self.settings["glitch_enabled"]))  # efekt włącza/wyłącza się natychmiast
-            return
-        
-        if key == "highscore_reset":
-            self.highscore = 0
-            CFG["highscore"] = 0
-            save_config({"highscore": 0})
             return
         
         if key == "levels_active":
@@ -1923,13 +1968,13 @@ class Game:
         self.scene = Scene.SETTINGS
         self.settings_scroll = 0.0
         self._ensure_selected_visible()
+        self.settings.setdefault("glitch_mode", "BOTH")  
+        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
+        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
+        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
 
     def settings_save(self) -> None:
         clamp_settings(self.settings)
-
-        for k in ("rule_font_center", "rule_font_pinned"):
-            if k in self.settings:
-                self.settings.pop(k, None)
 
         payload = commit_settings(
             self.settings,
@@ -1937,15 +1982,13 @@ class Game:
             LEVELS=LEVELS,
             TIMED_DURATION=TIMED_DURATION,
             WINDOWED_DEFAULT_SIZE=WINDOWED_DEFAULT_SIZE,
-            RULE_EVERY_HITS=RULE_EVERY_HITS,
+            RULE_EVERY_HITS=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
         )
 
-        try:
-            if "rules" in payload and isinstance(payload["rules"], dict):
-                payload["rules"].pop("banner_font_center", None)
-                payload["rules"].pop("banner_font_pinned", None)
-        except Exception:
-            pass
+        payload.setdefault("effects", {})["glitch_mode"] = self.settings["glitch_mode"]
+        payload.setdefault("display", {})["fps"] = int(self.settings["fps"])
+        payload.setdefault("rules", {})["every_hits"] = int(self.settings["remap_every_hits"])
+        payload["rules"]["spin_rotations_per_level"] = int(self.settings["spin_rotations_per_level"])
 
         save_config(payload)
 
@@ -1956,13 +1999,6 @@ class Game:
                 else:
                     dst[k] = v
         _deep_merge(CFG, payload)
-
-        try:
-            if "rules" in CFG and isinstance(CFG["rules"], dict):
-                CFG["rules"].pop("banner_font_center", None)
-                CFG["rules"].pop("banner_font_pinned", None)
-        except Exception:
-            pass
 
         apply_levels_from_cfg(CFG)
 
@@ -1981,17 +2017,21 @@ class Game:
         self.scene = Scene.MENU
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
-        # wyczyść
-        L.rules = []
-        L.rotations_per_level = 0
-        L.memory_mode = False
-        L.control_flip_lr_ud = False
-        # zastosuj
+        L.rules = []; L.rotations_per_level = 0; L.memory_mode = False; L.control_flip_lr_ud = False
         for m in (L.modifiers or []):
             if m == "remap":
-                L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS))
+                L.rules.append(
+                    RuleSpec(
+                        RuleType.MAPPING,
+                        banner_on_level_start=True,
+                        periodic_every_hits=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
+                    )
+                )
             elif m == "spin":
-                L.rotations_per_level = max(L.rotations_per_level, 3)
+                L.rotations_per_level = max(
+                    L.rotations_per_level,
+                    int(self.settings.get("spin_rotations_per_level", 3))
+                )
             elif m == "memory":
                 L.memory_mode = True
             elif m == "joystick":
@@ -2185,6 +2225,14 @@ class Game:
 
             elif self.scene is Scene.SETTINGS:
                 if event.key == pygame.K_RETURN:
+                    if not self.settings_focus_table:
+                        items = self.settings_items()
+                        label, value, key = items[self.settings_idx]
+                        if key == "highscore" and self.highscore != 0:
+                            self.highscore = 0
+                            CFG["highscore"] = 0
+                            save_config({"highscore": 0})
+                            return  
                     self.settings_save()
                     return
 
@@ -3440,6 +3488,8 @@ class Game:
 
                 for i, (label, value, key) in enumerate(items):
                     selected = (i == self.settings_idx and key is not None and not self.settings_focus_table)
+                    if selected and key == "highscore" and self.highscore != 0:
+                        value = "enter to reset"
                     row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
                     y += row_h + item_spacing
 
@@ -3520,7 +3570,7 @@ def main():
             game.handle_event(event, iq)
         game.update(iq)
         game.draw()
-        game.clock.tick(FPS)
+        game.clock.tick(int(game.settings.get("fps", FPS)))
 
 if __name__ == "__main__":
     try:

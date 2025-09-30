@@ -14,8 +14,8 @@
     ]
   },
   "speedup": {
-    "target_time_initial": 9.99999999999998,
-    "target_time_min": 1.3000000000000007,
+    "target_time_initial": 10.0,
+    "target_time_min": 2.0000000000000013,
     "target_time_step": -0.2
   },
   "timed": {
@@ -23,19 +23,21 @@
     "rule_bonus": 0.0
   },
   "rules": {
-    "every_hits": 10,
+    "every_hits": 5,
     "banner_sec": 2.0,
     "banner_font_center": 64,
-    "banner_font_pinned": 40
+    "banner_font_pinned": 40,
+    "spin_rotations_per_level": 5
   },
   "lives": 5,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
-    "music_volume": 0.05000000000000007,
+    "music_volume": 0.10000000000000007,
     "sfx_volume": 0.39999999999999986
   },
   "effects": {
-    "glitch_enabled": true
+    "glitch_enabled": true,
+    "glitch_mode": "BOTH"
   },
   "ui": {
     "ring_palette": "auto"
@@ -48,7 +50,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 223,
+  "highscore": 0,
   "levels": {
     "1": {
       "hits": 15,
