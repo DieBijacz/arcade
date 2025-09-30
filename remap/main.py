@@ -3296,36 +3296,27 @@ class Game:
                 self._draw_gameplay()
 
             elif self.scene is Scene.MENU:
-                # tło
                 self._blit_bg()
+                logo_path = str(PKG_DIR / "assets" / "images" / "logo2.png")
+                logo_img = self.images.load(logo_path)
 
-                # Tytuł
-                title_surf = self._render_title_remap_minimal()
-                tw, th = title_surf.get_size()
-                sw = max(1, int(tw * MENU_TITLE_GLOBAL_SCALE))
-                sh = max(1, int(th * MENU_TITLE_GLOBAL_SCALE))
-                title_surf = pygame.transform.smoothscale(title_surf, (sw, sh))
-                tw, th = title_surf.get_size()
+                # Pozycja Y
+                ty = int(self.h * MENU_TITLE_Y_FACTOR)
 
-                ty = int(self.h * MENU_TITLE_Y_FACTOR)      # bez boba
-                tx = (self.w - tw) // 2
-                self.screen.blit(title_surf, (tx, ty))
+                if logo_img:
+                    iw, ih = logo_img.get_size()
+                    max_w = int(self.w * 0.90)
+                    max_h = int(self.h * 0.42)
+                    s = min(max_w / max(1, iw), max_h / max(1, ih))
+                    sw, sh = max(1, int(iw * s)), max(1, int(ih * s))
+                    logo_s = pygame.transform.smoothscale(logo_img, (sw, sh))
+                    tx = (self.w - sw) // 2
+                    self.screen.blit(logo_s, (tx, ty))
+                    title_bottom = ty + sh
+                else:
+                    title_bottom = ty
 
-                # cienka neonowa belka pod tytułem (stała szerokość; chcemy stabilność)
-                bar_margin = self.px(10)
-                bar_h = self.px(6)
-                bar_w = int(tw * 0.82)
-                bx = (self.w - bar_w) // 2
-                by = ty + th + bar_margin
-
-                bar = pygame.Surface((bar_w, bar_h), pygame.SRCALPHA)
-                bar.fill((120, 210, 255, 90))
-                glow = pygame.transform.smoothscale(bar, (int(bar_w * 1.2), int(bar_h * 2.4)))
-                grect = glow.get_rect(center=(bx + bar_w // 2, by + bar_h // 2))
-                self.screen.blit(glow, grect.topleft)
-                self.screen.blit(bar, (bx, by))
-
-                # Badge trybu
+                # --- Badge trybu pod logo ---
                 mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
                 mode_text = f"Mode: {mode_label}   (M to change)"
                 t_surf = self.mid.render(mode_text, True, MENU_MODE_TEXT_COLOR)
@@ -3333,14 +3324,14 @@ class Game:
                 bw = t_surf.get_width() + pad_x * 2
                 bh = t_surf.get_height() + pad_y * 2
                 bx = (self.w - bw) // 2
-                by = by + bar_h + self.px(14)
-
+                gap = self.px(6)  # ~6 px UI
+                by = title_bottom + gap
                 badge_rect = pygame.Rect(bx, by, bw, bh)
                 pygame.draw.rect(self.screen, MENU_MODE_BADGE_BG, badge_rect, border_radius=MENU_MODE_BADGE_RADIUS)
                 pygame.draw.rect(self.screen, MENU_MODE_BADGE_BORDER, badge_rect, width=1, border_radius=MENU_MODE_BADGE_RADIUS)
                 self.screen.blit(t_surf, (bx + pad_x, by + pad_y))
 
-                # Hint na dole
+                # --- Hint na dole ---
                 hint = "ENTER = start    ·    O = settings    ·    ESC = quit"
                 hf = self.font
                 hw, hh = hf.size(hint)

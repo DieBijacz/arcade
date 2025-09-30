@@ -26,6 +26,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     "ui": {"ring_palette": "auto"},
     "images": {
         "background": "assets/images/bg.png",
+        "logo": "assets/img/logo.png",
         "symbol_circle": "assets/images/circle.png",
         "symbol_cross": "assets/images/cross.png",
         "symbol_square": "assets/images/square.png",
