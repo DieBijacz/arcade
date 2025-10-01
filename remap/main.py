@@ -228,6 +228,7 @@ MOD_COLOR = {
     "spin":    (255, 210, 90),   # gold
     "memory":  (220, 80, 80),    # red
     "invert":  (90, 200, 120),   # green (inverted joystick)
+    "random":  (90, 220, 255),   # cyan
 }
 
 RING_POSITIONS = ["TOP", "RIGHT", "LEFT", "BOTTOM"]
@@ -319,7 +320,7 @@ SCORE_LABEL_COLOR = ACCENT          # kolor napisu „SCORE”
 SCORE_VALUE_COLOR = INK             # kolor liczby punktów
 
 # --- Modifiers (UI table) ---
-MODIFIER_OPTIONS = ["—", "remap", "spin", "memory", "joystick"]  # "—" = none
+MODIFIER_OPTIONS = ["—", "remap", "spin", "memory", "joystick", "random"]  # "—" = none
 
 # --- Aspect --- (utrzymanie 9:16 w trybie okienkowym)
 ASPECT_RATIO = (9, 16)             # docelowe proporcje (portret)
@@ -752,7 +753,7 @@ def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
 
     # Aktywne „cechy” poziomu
     has_remap   = any(s.type is RuleType.MAPPING for s in (L.rules or []))
-    has_rotate  = getattr(L, "rotations_per_level", 0) > 0
+    has_rotate  = getattr(L, "rotations_per_level", 0) > 0 or int(g.settings.get("spin_every_hits", 0)) > 0
     has_memory  = bool(getattr(L, "memory_mode", False))
     has_invert  = bool(getattr(L, "control_flip_lr_ud", False))
 
@@ -1480,7 +1481,7 @@ class Game:
         self.settings.setdefault("glitch_mode", "BOTH")  # NONE | TEXT | SCREEN | BOTH
         self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
         self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
-        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
+        self.settings.setdefault("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5)))
         self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
         self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))       # +s za poprawną
         self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))    # -s za złą
@@ -1874,7 +1875,7 @@ class Game:
             ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
             ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
             ("Remap every",  f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits", "remap_every_hits"),
-            ("Rotations/level", f"{int(self.settings.get('spin_rotations_per_level', 3))}", "spin_rotations_per_level"),
+            ("Rotate every",  f"{int(self.settings.get('spin_every_hits', 5))} hits", "spin_every_hits"),
             ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
             ("Levels active", f"{int(self.levels_active)}", "levels_active"),
 
@@ -1985,10 +1986,9 @@ class Game:
                 self.rules.mapping_every_hits = int(v)
             return
 
-        if key == "spin_rotations_per_level":
-            v = int(self.settings.get("spin_rotations_per_level", 3)) + delta
-            v = max(0, min(5, v))
-            self.settings["spin_rotations_per_level"] = v
+        if key == "spin_every_hits":
+            v = int(self.settings.get("spin_every_hits", 5)) + delta
+            self.settings["spin_every_hits"] = max(1, min(50, v))
             return
         
         if key == "ring_palette":
@@ -2079,7 +2079,7 @@ class Game:
         self.settings.setdefault("glitch_mode", "BOTH")
         self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
         self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
-        self.settings.setdefault("spin_rotations_per_level", int(CFG.get("rules", {}).get("spin_rotations_per_level", 3)))
+        self.settings.setdefault("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5)))
 
         self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
         self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))
@@ -2109,7 +2109,7 @@ class Game:
         payload.setdefault("effects", {})["glitch_mode"] = self.settings["glitch_mode"]
         payload.setdefault("display", {})["fps"] = int(self.settings["fps"])
         payload.setdefault("rules", {})["every_hits"] = int(self.settings["remap_every_hits"])
-        payload["rules"]["spin_rotations_per_level"] = int(self.settings["spin_rotations_per_level"])
+        payload["rules"]["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
 
         payload.setdefault("timed", {})
         payload["timed"]["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
@@ -2146,8 +2146,29 @@ class Game:
         self.scene = Scene.MENU
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
-        L.rules = []; L.rotations_per_level = 0; L.memory_mode = False; L.control_flip_lr_ud = False
-        for m in (L.modifiers or []):
+        L.rules = []
+        L.rotations_per_level = 0
+        L.memory_mode = False
+        L.control_flip_lr_ud = False
+
+        raw = (L.modifiers or [])[:]
+        while len(raw) < 3:
+            raw.append("—")
+
+        # kandydaci, z których losujemy dla 'random'
+        pool_all = ["remap", "spin", "memory", "joystick"]
+        resolved: list[str] = []
+        for m in raw[:3]:
+            if m == "random":
+                # unikaj duplikatów z już wybranych
+                choices = [x for x in pool_all if x not in resolved]
+                pick = random.choice(choices or pool_all)
+                resolved.append(pick)
+            else:
+                resolved.append(m)
+
+        # 2) Zaszyj efekty z 'resolved' w polach levelu
+        for m in resolved:
             if m == "remap":
                 L.rules.append(
                     RuleSpec(
@@ -2157,10 +2178,7 @@ class Game:
                     )
                 )
             elif m == "spin":
-                L.rotations_per_level = max(
-                    L.rotations_per_level,
-                    int(self.settings.get("spin_rotations_per_level", 3))
-                )
+                L.rotations_per_level = max(1, L.rotations_per_level)
             elif m == "memory":
                 L.memory_mode = True
             elif m == "joystick":
@@ -2236,7 +2254,7 @@ class Game:
         self._apply_modifiers_to_fields(self.level_cfg)
 
         # rotacje / memory / instrukcja — jak u Ciebie
-        self._plan_rotations_for_level()
+        # self._plan_rotations_for_level()
         self.memory_show_icons = True
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
@@ -2245,7 +2263,7 @@ class Game:
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
-        if self.level_cfg.rotations_per_level > 0:
+        if self.level_cfg.rotations_per_level > 0 or int(self.settings.get("spin_every_hits", 0)) > 0:
             self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
             self.did_start_rotation = True
 
@@ -2254,14 +2272,15 @@ class Game:
             
         self._recompute_keymap()
 
-    def _plan_rotations_for_level(self) -> None:
-        self.rotation_breaks = set()
-        self.did_start_rotation = False
-        N = self.level_cfg.rotations_per_level
-        if N > 0:
-            seg = max(1, self.level_goal // N)   # np. 15//3 = 5 → progi po 5 i 10 (startowa rotacja robiona osobno)
-            for i in range(1, N):                # „w trakcie”
-                self.rotation_breaks.add(i * seg)
+    # def _plan_rotations_for_level(self) -> None:
+    #     self.rotation_breaks = set()
+    #     self.did_start_rotation = False
+    #     every = int(self.settings.get("spin_every_hits", 0))
+    #     if every > 0:
+    #         k = every
+    #         while k < self.level_goal:
+    #             self.rotation_breaks.add(k) 
+    #             k += every
 
     def level_up(self) -> None:
         if self.level < self.levels_active:
@@ -2282,7 +2301,7 @@ class Game:
         now = self.now()
         self.banner.start(now, from_pinned=from_pinned)
         self.pause_start = now
-        self.pause_until = self.banner.active_until
+        self.pause_until = max(self.pause_until, now + self.banner.total)
         if self.mode is Mode.TIMED:
             self.time_left += float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
         if self.level_cfg.memory_mode:
@@ -2322,8 +2341,12 @@ class Game:
             return
         if self.fx.is_exit_active():
             return
+
         self.fx.clear_exit()
         self.exit_dir_pos = None
+
+        if self.rot_anim.get("active"):
+            return
         if self.scene is Scene.GAME and not self.banner.is_active(self.now()):
             self.new_target()
 
@@ -2506,13 +2529,9 @@ class Game:
                     self._lock_inputs()
                     return
 
-            # cykliczny remap (baner)
-            if self.rules.on_correct():
-                self.rules.roll_mapping(SYMS)
-                self._start_mapping_banner(from_pinned=True)
-
             # rotacje w levelu
-            if self.level_cfg.rotations_per_level > 0 and self.hits_in_level in self.rotation_breaks:
+            every = int(self.settings.get("spin_every_hits", 0))
+            if every > 0 and (self.hits_in_level % every == 0):
                 self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
             # Level up? Przerywamy flow (instrukcja wystartuje nowy cel później)
@@ -2552,53 +2571,27 @@ class Game:
         now = self.now()
         self.fx.maybe_schedule_text_glitch()
 
-        # --- REMAP banner: detekcja końca animacji (zbocze opadające) ---
         banner_active = self.banner.is_active(now)
         if self._banner_was_active and not banner_active:
             if self.level_cfg.memory_mode and self.memory_preview_armed:
                 self._memory_start_preview(reset_moves=False, force_unhide=False)
         self._banner_was_active = banner_active
 
-        # debounce
-        if self.lock_until_all_released and not self.keys_down and now >= self.accept_after:
-            self.lock_until_all_released = False
-        
-        # INSTRUKCJA: czekamy do końca timera albo na skip
-        if self.scene is Scene.INSTRUCTION:
+        # === WSPÓLNA PAUZA ===
+        paused = banner_active or (now < self.pause_until)
+        if paused:
             _ = iq.pop_all()
-
-            # 1) odpal/aktualizuj tutorial
-            if self.tutorial:
-                self.tutorial.update()
-                # 2) gdy tutorial skończył wszystkie scenki — przejście do gry
-                if self.tutorial.is_finished():
-                    self._enter_gameplay_after_instruction()
-                    return
-
-            # 3) fallback: jeśli kiedyś jednak ustawisz licznik czasu – też zadziała
-            if self.instruction_until != float('inf') and self.now() >= self.instruction_until:
-                self._enter_gameplay_after_instruction()
+            self._last_tick = now       # TIMED nie traci czasu
             return
 
-        if self.scene is not Scene.GAME:
-            _ = iq.pop_all()
-            return
-        
-        if banner_active:
-            _ = iq.pop_all()
-            # nie licz upływu czasu w TIMED, „zamrażamy” też timeout targetu
-            self._last_tick = now
-            return
-
-        # po „odkorkowaniu” pauzy:
+        # rezumpcja po pauzie: skompensuj deadline SPEED-UP
         if self.pause_until and now >= self.pause_until:
-            paused = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
+            paused_time = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
             self.pause_start = 0.0
             self.pause_until = 0.0
             if self.target_deadline is not None:
-                self.target_deadline += paused
+                self.target_deadline += paused_time
             self._last_tick = now
-
             self._cleanup_exit_slide_if_ready()
 
         # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
@@ -2866,7 +2859,7 @@ class Game:
             y += row_h + S(6)
 
         # legenda — wycentrowana względem tabeli (z paddingiem), nie całego ekranu
-        legend = "Legend: remap (magenta) · spin (gold) · memory (red) · inverted joystick (green)"
+        legend = "Legend: remap (magenta) · spin (gold) · memory (red) · inverted joystick (green) · RANDOM (cyan)"
         lw, _ = self.font.size(legend)
         legend_x = x0 + max(0, (table_w - int(lw * scale)) // 2)
         self.draw_text(legend, pos=(legend_x, y + S(4)),
@@ -3354,10 +3347,8 @@ class Game:
             "from_layout": dict(self.ring_layout),
             "to_layout": self._pick_new_ring_layout(),
         })
-        # pauza rozgrywki na czas animacji (bez glitcha)
         self.pause_start = now
-        self.pause_until = now + self.rot_anim["dur"]
-        # ważne: NIE wywołujemy self.fx.trigger_glitch()
+        self.pause_until = max(self.pause_until, now + self.rot_anim["dur"]) 
 
     def _update_ring_rotation_anim(self) -> float:
         if not self.rot_anim["active"]:
@@ -3365,23 +3356,18 @@ class Game:
         now = self.now()
         t = (now - self.rot_anim["t0"]) / self.rot_anim["dur"]
         if t >= 1.0:
-            # finisz: zatwierdź docelowy layout i wyłącz animację
             self.ring_layout = dict(self.rot_anim["to_layout"])
             self._recompute_keymap()
             self.rot_anim["active"] = False
             self.rot_anim["swapped"] = True
-            # MEMORY + SPIN: po faktycznej zmianie układu pokaż go graczowi od nowa
             if self.level_cfg.memory_mode:
                 self._memory_start_preview(reset_moves=True, force_unhide=True)
             return 0.0
-        # ease-out dla przyjemnego hamowania
         p = self._ease_out_cubic(max(0.0, min(1.0, t)))
-        # w połowie obrotu podmień layout (żeby „wymieszać” w locie)
         if (not self.rot_anim["swapped"]) and t >= self.rot_anim["swap_at"]:
             self.ring_layout = dict(self.rot_anim["to_layout"])
             self._recompute_keymap()
             self.rot_anim["swapped"] = True
-        # kąt całkowity
         deg = 360.0 * self.rot_anim["spins"] * p
         return deg
 

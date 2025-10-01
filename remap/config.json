@@ -9,12 +9,12 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      770,
-      1369
+      446,
+      793
     ]
   },
   "speedup": {
-    "target_time_initial": 10.0,
+    "target_time_initial": 3.0000000000000204,
     "target_time_min": 2.0000000000000013,
     "target_time_step": -0.2
   },
@@ -24,14 +24,15 @@
     "gain": 1.0,
     "penalty": 1.0,
     "difficulty": "EASY",
-    "mod_every_hits": 8
+    "mod_every_hits": 6
   },
   "rules": {
-    "every_hits": 5,
+    "every_hits": 10,
     "banner_sec": 2.0,
     "banner_font_center": 64,
     "banner_font_pinned": 40,
-    "spin_rotations_per_level": 5
+    "spin_rotations_per_level": 5,
+    "spin_every_hits": 1
   },
   "lives": 5,
   "audio": {
@@ -54,7 +55,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 0,
+  "highscore": 42,
   "levels": {
     "1": {
       "hits": 15,
@@ -64,7 +65,7 @@
         235
       ],
       "mods": [
-        "—",
+        "spin",
         "—",
         "—",
         "—"
