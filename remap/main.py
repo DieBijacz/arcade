@@ -322,6 +322,24 @@ SCORE_VALUE_COLOR = INK             # kolor liczby punktów
 # --- Modifiers (UI table) ---
 MODIFIER_OPTIONS = ["—", "remap", "spin", "memory", "joystick", "random"]  # "—" = none
 
+def _normalize_mods_raw(mods: List[str]) -> List[str]:
+    valid = set(MODIFIER_OPTIONS)
+    fixed = {"remap", "spin", "memory", "joystick"}  # stałe, bez powtórek
+    out, seen_fixed = [], set()
+    for m in (mods or [])[:3]:
+        m = m if m in valid else "—"
+        if m in fixed:
+            if m in seen_fixed:
+                out.append("—")
+            else:
+                seen_fixed.add(m)
+                out.append(m)
+        else:
+            out.append(m)  # "—" i "random" przechodzą bez ograniczeń
+    while len(out) < 3:
+        out.append("—")
+    return out[:3]
+
 # --- Aspect --- (utrzymanie 9:16 w trybie okienkowym)
 ASPECT_RATIO = (9, 16)             # docelowe proporcje (portret)
 ASPECT_SNAP_MIN_SIZE = (360, 640)  # minimalny rozmiar okna po „snapie”
@@ -445,9 +463,8 @@ def apply_levels_from_cfg(cfg: dict) -> None:
                 if "hits" in v:
                     L.hits_required = int(max(1, min(999, v["hits"])))
                 if "mods" in v and isinstance(v["mods"], list):
-                    mods = [m if m in MODIFIER_OPTIONS else "—" for m in v["mods"]]
-                    while len(mods) < 3: mods.append("—")
-                    L.modifiers = mods[:3]
+                    raw = [m if m in MODIFIER_OPTIONS else "—" for m in v["mods"]]
+                    L.modifiers = _normalize_mods_raw(raw)
         except Exception:
             pass
 
@@ -724,10 +741,11 @@ class TutorialPlayer:
 
 def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
     L = g.level_cfg
+    resolved = getattr(L, "_mods_resolved", L.modifiers or [])
 
     # Aktywne „cechy” poziomu
     has_remap   = any(s.type is RuleType.MAPPING for s in (L.rules or []))
-    has_rotate = ("spin" in (L.modifiers or [])) or int(g.settings.get("spin_every_hits", 0)) > 0
+    has_rotate = ("spin" in resolved)
     has_memory  = bool(getattr(L, "memory_mode", False))
     has_invert  = bool(getattr(L, "control_flip_lr_ud", False))
 
@@ -2151,10 +2169,10 @@ class Game:
         self.scene = Scene.MENU
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
-        raw = (L.modifiers or [])[:3]
-        while len(raw) < 3:
-            raw.append("—")
+        # 1) weź RAW i znormalizuj (na wszelki wypadek, np. po edycji)
+        raw = _normalize_mods_raw((L.modifiers or [])[:3])
 
+        # 2) rozwiń RANDOMY tak, żeby się nie powtarzały
         pool_all = ["remap", "spin", "memory", "joystick"]
         resolved: list[str] = []
         for m in raw:
@@ -2163,14 +2181,17 @@ class Game:
                 pick = random.choice(choices or pool_all)
                 resolved.append(pick)
             else:
-                resolved.append(m if m in MODIFIER_OPTIONS else "—")
+                resolved.append(m)
 
-        L.modifiers = resolved[:3]
+        # 3) zapamiętaj rozstrzygnięte mody obok RAW
+        setattr(L, "_mods_resolved", resolved[:3])
+
+        # 4) ustal flagi levelu wg ROZSTRZYGNIĘTYCH modów
         L.rules = []
         L.memory_mode = False
         L.control_flip_lr_ud = False
 
-        for m in L.modifiers:
+        for m in resolved:
             if m == "remap":
                 L.rules.append(
                     RuleSpec(
@@ -2184,28 +2205,36 @@ class Game:
             elif m == "joystick":
                 L.control_flip_lr_ud = True
             elif m == "spin":
-                pass  
+                pass  # obrót odpalamy w apply_level
 
     def _set_level_mod_slot(self, lid: int, slot_idx: int, direction: int) -> None:
-        # direction: +1 prawo, -1 lewo
         L = LEVELS.get(lid)
-        if not L: return
+        if not L: 
+            return
+
         mods = (L.modifiers or [])[:]
-        while len(mods) < 3: mods.append("—")
+        while len(mods) < 3:
+            mods.append("—")
+
+        mods = _normalize_mods_raw(mods)
+
         cur = mods[slot_idx]
-        opts = MODIFIER_OPTIONS[:]  # ["—","remap","spin","memory","joystick"]
+        opts = MODIFIER_OPTIONS[:]  # ["—","remap","spin","memory","joystick","random"]
         i = opts.index(cur) if cur in opts else 0
 
-        # pętla po opcjach z omijaniem duplikatów w tym samym levelu
+        fixed = {"remap", "spin", "memory", "joystick"}
         for _ in range(len(opts)):
             i = (i + direction) % len(opts)
             cand = opts[i]
-            # dozwól "—" zawsze; inne – tylko jeśli nie zajęte w INNYM slocie
-            if cand == "—" or cand not in [mods[j] for j in range(3) if j != slot_idx]:
+            if cand in ("—", "random"):
+                mods[slot_idx] = cand
+                break
+            others = [mods[j] for j in range(3) if j != slot_idx]
+            if cand not in others:
                 mods[slot_idx] = cand
                 break
 
-        L.modifiers = mods[:3]
+        L.modifiers = _normalize_mods_raw(mods)  
         self._apply_modifiers_to_fields(L)
 
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
@@ -2260,7 +2289,9 @@ class Game:
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
-        if ("spin" in (self.level_cfg.modifiers or [])) or int(self.settings.get("spin_every_hits", 0)) > 0:
+        resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
+
+        if "spin" in resolved:
             self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
         if self.level_cfg.memory_mode:
@@ -2526,8 +2557,9 @@ class Game:
                 self.target_time = max(tmin, self.target_time + step)
             
             # rotacje w levelu
+            resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
             every = int(self.settings.get("spin_every_hits", 0))
-            if every > 0 and (self.hits_in_level % every == 0):
+            if ("spin" in resolved) and every > 0 and (self.hits_in_level % every == 0):
                 self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
             # Level up? Przerywamy flow (instrukcja wystartuje nowy cel później)
@@ -2721,14 +2753,15 @@ class Game:
         return pygame.Rect(x, y, w, h)
 
     def _draw_mod_chip(self, text: str, x: int, y: int, col, *, scale: float = 1.0) -> pygame.Rect:
+        display = "inverted" if text == "joystick" else text
         pad_x = int(self.px(8) * scale)
         pad_y = int(self.px(4) * scale)
-        tw, th = self.font.size(text.upper())
+        tw, th = self.font.size(display.upper())
         w, h = int(tw * scale) + pad_x * 2, int(th * scale) + pad_y * 2
         rect = pygame.Rect(x, y, w, h)
         self._draw_round_rect(self.screen, rect, (20,22,30,160),
                             border=(*col, 220), border_w=1, radius=int(self.px(10) * scale))
-        self.draw_text(text.upper(), pos=(x + pad_x, y + pad_y),
+        self.draw_text(display.upper(), pos=(x + pad_x, y + pad_y),
                     font=self.font, color=col, shadow=True, glitch=False, scale=scale)
         return rect
 

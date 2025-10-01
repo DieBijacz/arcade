@@ -32,7 +32,7 @@
     "banner_font_center": 64,
     "banner_font_pinned": 40,
     "spin_rotations_per_level": 5,
-    "spin_every_hits": 1
+    "spin_every_hits": 7
   },
   "lives": 5,
   "audio": {
@@ -65,9 +65,9 @@
         235
       ],
       "mods": [
-        "—",
-        "spin",
-        "joystick",
+        "random",
+        "random",
+        "random",
         "—"
       ]
     },
@@ -79,7 +79,7 @@
         235
       ],
       "mods": [
-        "random",
+        "—",
         "—",
         "—",
         "—"
