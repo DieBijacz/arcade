@@ -86,7 +86,7 @@ SYMBOL_COLORS = {
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
 GAP = 0.04                       # przerwa między obiektami w siatce
 FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
-INPUT_ACCEPT_DELAY = 0.12
+INPUT_ACCEPT_DELAY = 0.03
 TEXT_SHADOW_OFFSET = (2, 2)
 UI_RADIUS = 8
 
@@ -134,7 +134,7 @@ TEXT_GLITCH_MAX_GAP = 5.0         # max przerwa między glitchami
 TEXT_GLITCH_CHAR_PROB = 0.01      # prawdopodobieństwo podmiany znaku
 TEXT_GLITCH_CHARSET = "01+-_#@$%&*[]{}<>/\\|≈≠∆░▒▓"  # z jakich znaków mieszamy
 
-EXIT_SLIDE_SEC = 0.18             # szybki „zjazd” po poprawnej odpowiedzi
+EXIT_SLIDE_SEC = 0.12             # szybki „zjazd” po poprawnej odpowiedzi
 INSTRUCTION_FADE_IN_SEC = 1    # fade na poczatku instukcji zeby nie bylo gwaltownego wejscia
 
 # --- Pulse (FX) ---
@@ -379,7 +379,6 @@ class RuleSpec:
 class LevelCfg:
     id: int
     rules: List[RuleSpec] = field(default_factory=list)
-    rotations_per_level: int = 0                            # ile rotacji w ramach poziomu (w tym jedna na starcie – patrz apply_level)
     memory_mode: bool = False                               # L5: po intro ring znika
     memory_intro_sec: float = 3.0                           # ile sekund podglądu układu ringu przy starcie memory (nadpisywalne)
     instruction: str = ""                                   # krótki tekst instrukcji
@@ -402,21 +401,18 @@ LEVELS: Dict[int, LevelCfg] = {
     ),
     3: LevelCfg(3,
         rules=[],
-        rotations_per_level=3,
         instruction="Level 3 — Rotacje\nUkład ringu zmienia się w trakcie.",
         
         hits_required=15
     ),
     4: LevelCfg(4,
         rules=[RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=RULE_EVERY_HITS)],
-        rotations_per_level=3,
         instruction="Level 4 — Mix\nReguly + rotacje.",
         instruction_sec=5.0,  
         hits_required=15
     ),
     5: LevelCfg(5,
         rules=[],
-        rotations_per_level=1,
         memory_mode=True, memory_intro_sec=3.0,
         instruction="Level 5 — Memory\nZapamiętaj układ, potem ikony znikną.",
         
@@ -424,7 +420,6 @@ LEVELS: Dict[int, LevelCfg] = {
     ),
     6: LevelCfg(6,
         rules=[],
-        rotations_per_level=3,                
         memory_mode=True, memory_intro_sec=3.0,  
         instruction="Level 6 — Memory + Rotacje\nZapamiętaj układ — ring będzie się obracał.",
         instruction_sec=5.0,
@@ -432,7 +427,6 @@ LEVELS: Dict[int, LevelCfg] = {
     ),
     7: LevelCfg(7,
         rules=[],                              
-        rotations_per_level=0,
         memory_mode=False,
         control_flip_lr_ud=True,               
         instruction="Level 7 — Odwrócone sterowanie\nLewo↔Prawo oraz Góra↔Dół są zamienione.",
@@ -450,9 +444,6 @@ def apply_levels_from_cfg(cfg: dict) -> None:
                 L = LEVELS[lid]
                 if "hits" in v:
                     L.hits_required = int(max(1, min(999, v["hits"])))
-                if "color" in v and isinstance(v["color"], (list, tuple)) and len(v["color"]) == 3:
-                    r,g,b = [int(max(0, min(255, c))) for c in v["color"]]
-                    L.score_color = (r,g,b)
                 if "mods" in v and isinstance(v["mods"], list):
                     mods = [m if m in MODIFIER_OPTIONS else "—" for m in v["mods"]]
                     while len(mods) < 3: mods.append("—")
@@ -468,27 +459,11 @@ def _ensure_level_exists(lid: int) -> None:
     LEVELS[lid] = LevelCfg(
         id=lid,
         rules=[],
-        rotations_per_level=0,
         memory_mode=False,
         instruction=f"Level {lid}",
         hits_required=LEVEL_GOAL_PER_LEVEL,
-        modifiers=_derive_mods_from_fields(LevelCfg(lid))  # wstępne „— — —”
+        modifiers=["—","—","—"]
     )
-
-
-def _derive_mods_from_fields(L: LevelCfg) -> List[str]:
-    mods = []
-    if any(s.type is RuleType.MAPPING for s in (L.rules or [])): mods.append("remap")
-    if getattr(L, "rotations_per_level", 0) > 0:                 mods.append("spin")
-    if getattr(L, "memory_mode", False):                         mods.append("memory")
-    if getattr(L, "control_flip_lr_ud", False):                  mods.append("joystick")
-    if not mods: mods = ["—"]
-    while len(mods) < 3: mods.append("—")
-    return mods[:3]
-
-for L in LEVELS.values():
-    if not getattr(L, "modifiers", None):
-        L.modifiers = _derive_mods_from_fields(L)
 
 # ========= TUTORIAL =========
 @dataclass
@@ -748,12 +723,11 @@ class TutorialPlayer:
                 g.draw_text(self.caption, pos=(g.w/2 - tw/2, y), font=g.mid, color=ACCENT)
 
 def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
-    """Buduje tutorial na podstawie *aktualnej* konfiguracji levelu (modyfikatorów)."""
     L = g.level_cfg
 
     # Aktywne „cechy” poziomu
     has_remap   = any(s.type is RuleType.MAPPING for s in (L.rules or []))
-    has_rotate  = getattr(L, "rotations_per_level", 0) > 0 or int(g.settings.get("spin_every_hits", 0)) > 0
+    has_rotate = ("spin" in (L.modifiers or [])) or int(g.settings.get("spin_every_hits", 0)) > 0
     has_memory  = bool(getattr(L, "memory_mode", False))
     has_invert  = bool(getattr(L, "control_flip_lr_ud", False))
 
@@ -767,14 +741,12 @@ def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
 
     # Helper do losowania symboli
     def SYM(exclude: set[str] = set()) -> str:
-        import random
         choices = [s for s in SYMS if s not in exclude]
         return random.choice(choices) if choices else random.choice(SYMS)
 
     items: list[DemoItem] = []
     mapping_pair: Optional[tuple[str, str]] = None
 
-    # Jeżeli jest remap – pokaż baner i 2× symbol A kierowany do B + 1 neutralny
     if has_remap:
         a = SYM()
         b = SYM({a})
@@ -786,7 +758,6 @@ def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
             DemoItem(at=0.0, symbol=a,       slide_delay=1.0, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
         ]
     else:
-        # Bez remapu – trzy różne symbole do „siebie”
         x = SYM(); y = SYM({x}); z = SYM({x, y})
         items += [
             DemoItem(at=0.0, symbol=x, slide_delay=1.0, slide_duration=0.60),
@@ -794,21 +765,16 @@ def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
             DemoItem(at=0.0, symbol=z, slide_delay=1.0, slide_duration=0.60),
         ]
 
-    # Jeżeli są rotacje – zaznacz obrót przy pierwszych dwóch scenkach (dokładnie jak w Twoim starym L3/L4)
     if has_rotate and len(items) >= 2:
         items[0].rotate_ring = True
         items[1].rotate_ring = True
 
-    # Memory: samo wyświetlenie captionu wystarcza (mechanika chowania ikon już jest w kodzie gry).
-    # Invert: dopisaliśmy do captionu, sterowanie działa z pól levelu.
-
-    # Baner remapu pokazujemy jako statyczny (czytelny na ekranie instrukcji)
     return TutorialPlayer(
         g, items,
         caption=caption,
         mapping_pair=mapping_pair,
         show_mapping_banner=bool(mapping_pair),
-        static_banner=True,     # przypięty, bez animacji IN/HOLD/OUT
+        static_banner=True,    
         sequential=True,
         seq_gap=0.12,
     )
@@ -1487,7 +1453,6 @@ class Game:
         self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))    # -s za złą
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
         self.settings.setdefault("timed_difficulty", "EASY")   
-        self.settings.setdefault("timed_mod_every_hits", 6)    # co ile poprawnych losujemy
         self.settings.setdefault("timed_mod_every_hits",int(CFG.get("timed", {}).get("mod_every_hits", 6)))
 
         self.settings_focus_table = False
@@ -1529,7 +1494,6 @@ class Game:
         self.last_window_size = self.screen.get_size()
 
     def start_game(self) -> None:
-        if self.mode is Mode.TIMED: self._timed_roll_mod()
         self.reset_game_state()
         self._ensure_music()
         if self.music_ok:
@@ -1572,10 +1536,14 @@ class Game:
         self.exit_dir_pos = pos
         self.fx.start_exit_slide(self.target, duration=EXIT_SLIDE_SEC)
 
-        # pauza gry na czas zjazdu
         self.pause_start = now
         self.pause_until = max(self.pause_until, now + EXIT_SLIDE_SEC)
+
+        self.target = None
+        self.target_deadline = None
+
         return True
+
 
     @staticmethod
     def _ease_out_cubic(t: float) -> float:
@@ -1990,16 +1958,7 @@ class Game:
             v = int(self.settings.get("spin_every_hits", 5)) + delta
             self.settings["spin_every_hits"] = max(1, min(50, v))
             return
-        
-        if key == "ring_palette":
-            opts = ["auto", "clean-white", "electric-blue", "neon-cyan", "violet-neon", "magenta"]
-            cur = self.settings.get("ring_palette", "auto")
-            try: i = opts.index(cur)
-            except ValueError: i = 0
-            i = (i + delta) % len(opts)
-            self.settings["ring_palette"] = opts[i]
-            return
-        
+
         # --- per-level edits ---
         if key and key.startswith("level") and ("_hits" in key or "_color" in key):
             try:
@@ -2146,29 +2105,26 @@ class Game:
         self.scene = Scene.MENU
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
-        L.rules = []
-        L.rotations_per_level = 0
-        L.memory_mode = False
-        L.control_flip_lr_ud = False
-
-        raw = (L.modifiers or [])[:]
+        raw = (L.modifiers or [])[:3]
         while len(raw) < 3:
             raw.append("—")
 
-        # kandydaci, z których losujemy dla 'random'
         pool_all = ["remap", "spin", "memory", "joystick"]
         resolved: list[str] = []
-        for m in raw[:3]:
+        for m in raw:
             if m == "random":
-                # unikaj duplikatów z już wybranych
                 choices = [x for x in pool_all if x not in resolved]
                 pick = random.choice(choices or pool_all)
                 resolved.append(pick)
             else:
-                resolved.append(m)
+                resolved.append(m if m in MODIFIER_OPTIONS else "—")
 
-        # 2) Zaszyj efekty z 'resolved' w polach levelu
-        for m in resolved:
+        L.modifiers = resolved[:3]
+        L.rules = []
+        L.memory_mode = False
+        L.control_flip_lr_ud = False
+
+        for m in L.modifiers:
             if m == "remap":
                 L.rules.append(
                     RuleSpec(
@@ -2177,12 +2133,12 @@ class Game:
                         periodic_every_hits=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
                     )
                 )
-            elif m == "spin":
-                L.rotations_per_level = max(1, L.rotations_per_level)
             elif m == "memory":
                 L.memory_mode = True
             elif m == "joystick":
                 L.control_flip_lr_ud = True
+            elif m == "spin":
+                pass  
 
     def _set_level_mod_slot(self, lid: int, slot_idx: int, direction: int) -> None:
         # direction: +1 prawo, -1 lewo
@@ -2247,14 +2203,10 @@ class Game:
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
         self.level_goal = int(max(1, self.level_cfg.hits_required))
 
-        # wyczyść reguły poprzedniego levelu (instalacja konkretnych nastąpi po INSTRUCTION)
         self.rules.install([])
 
-        # odtwórz pola z listy wybranych modów (z tabeli)
         self._apply_modifiers_to_fields(self.level_cfg)
 
-        # rotacje / memory / instrukcja — jak u Ciebie
-        # self._plan_rotations_for_level()
         self.memory_show_icons = True
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
@@ -2263,30 +2215,19 @@ class Game:
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
-        if self.level_cfg.rotations_per_level > 0 or int(self.settings.get("spin_every_hits", 0)) > 0:
+        if ("spin" in (self.level_cfg.modifiers or [])) or int(self.settings.get("spin_every_hits", 0)) > 0:
             self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-            self.did_start_rotation = True
 
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
             
         self._recompute_keymap()
 
-    # def _plan_rotations_for_level(self) -> None:
-    #     self.rotation_breaks = set()
-    #     self.did_start_rotation = False
-    #     every = int(self.settings.get("spin_every_hits", 0))
-    #     if every > 0:
-    #         k = every
-    #         while k < self.level_goal:
-    #             self.rotation_breaks.add(k) 
-    #             k += every
-
     def level_up(self) -> None:
         if self.level < self.levels_active:
             self.level += 1
             self.hits_in_level = 0
-            self.apply_level(self.level)  # mapping na starcie odpali się po INSTRUCTION
+            self.apply_level(self.level) 
 
     def new_target(self) -> None:
         prev = self.target
@@ -2314,16 +2255,17 @@ class Game:
         if self.mode is Mode.TIMED:
             self._last_tick = self.now()
 
+        # Memory – jak było...
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
             self.memory_moves_count = 0
-            self.memory_hide_deadline = 0.0   
+            self.memory_hide_deadline = 0.0
             self.memory_preview_armed = True
 
-        # 1) Zainstaluj reguły DLA TEGO levelu (czyści poprzednie)
+        # Reguły levelu
         self.rules.install(self.level_cfg.rules)
 
-        # 2) Jeśli level wymaga banera mappingu na starcie – wylosuj TERAZ (po instrukcji) i uruchom baner
+        # Ewentualny mapping banner na starcie
         mapping_spec = next((s for s in (self.level_cfg.rules or [])
                             if s.type is RuleType.MAPPING and s.banner_on_level_start), None)
         if mapping_spec:
@@ -2333,8 +2275,12 @@ class Game:
             if self.level_cfg.memory_mode and self.memory_preview_armed:
                 self._memory_start_preview(reset_moves=False, force_unhide=False)
 
-        # 3) Nowy target na start rozgrywki
-        self.new_target()
+        # --- NOWE: nie spawnuj targetu, jeśli właśnie trwa baner lub spin ---
+        if not self.banner.is_active(self.now()) and not self.rot_anim.get("active"):
+            self.new_target()
+        else:
+            self.target = None
+            self.target_deadline = None
 
     def _cleanup_exit_slide_if_ready(self) -> None:
         if not self.exit_dir_pos:
@@ -2523,12 +2469,6 @@ class Game:
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
             
-            if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
-                self.level_up()
-                if self.scene is Scene.INSTRUCTION:
-                    self._lock_inputs()
-                    return
-
             # rotacje w levelu
             every = int(self.settings.get("spin_every_hits", 0))
             if every > 0 and (self.hits_in_level % every == 0):
@@ -2544,8 +2484,6 @@ class Game:
             # Spróbuj uruchomić exit-slide; jeśli nie — od razu nowy target
             if not self._try_start_exit_slide(required):
                 self.new_target()
-
-            self._lock_inputs()
             return
 
         # --- ZŁA ODPOWIEDŹ ---
@@ -2589,10 +2527,19 @@ class Game:
             paused_time = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
             self.pause_start = 0.0
             self.pause_until = 0.0
-            if self.target_deadline is not None:
+
+            if self.target_deadline is not None and self.exit_dir_pos is None:
                 self.target_deadline += paused_time
+
             self._last_tick = now
             self._cleanup_exit_slide_if_ready()
+
+        if (self.scene is Scene.GAME 
+            and self.target is None 
+            and not self.banner.is_active(now) 
+            and not self.rot_anim.get("active", False) 
+            and now >= self.pause_until):
+            self.new_target()
 
         # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
         if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
@@ -3338,17 +3285,13 @@ class Game:
     def start_ring_rotation(self, *, dur: float = 0.8, spins: float = 2.0, swap_at: float = 0.5) -> None:
         now = self.now()
         self.rot_anim.update({
-            "active": True,
-            "t0": now,
-            "dur": float(max(0.15, dur)),
-            "spins": float(spins),
-            "swap_at": float(max(0.05, min(0.95, swap_at))),
-            "swapped": False,
-            "from_layout": dict(self.ring_layout),
+            "active": True, "t0": now, "dur": float(max(0.15, dur)),
+            "spins": float(spins), "swap_at": float(max(0.05, min(0.95, swap_at))),
+            "swapped": False, "from_layout": dict(self.ring_layout),
             "to_layout": self._pick_new_ring_layout(),
         })
         self.pause_start = now
-        self.pause_until = max(self.pause_until, now + self.rot_anim["dur"]) 
+        self.pause_until = max(self.pause_until, now + self.rot_anim["dur"])  
 
     def _update_ring_rotation_anim(self) -> float:
         if not self.rot_anim["active"]:

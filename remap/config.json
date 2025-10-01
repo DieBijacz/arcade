@@ -9,14 +9,14 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      446,
-      793
+      770,
+      1369
     ]
   },
   "speedup": {
     "target_time_initial": 3.0000000000000204,
     "target_time_min": 2.0000000000000013,
-    "target_time_step": -0.2
+    "target_time_step": 3.122502256758253e-17
   },
   "timed": {
     "duration": 60.0,
@@ -55,7 +55,7 @@
     "symbol_triangle": "assets/images/triangle.png",
     "arrow": "assets/images/arrow.png"
   },
-  "highscore": 42,
+  "highscore": 75,
   "levels": {
     "1": {
       "hits": 15,
@@ -65,21 +65,21 @@
         235
       ],
       "mods": [
+        "—",
         "spin",
-        "—",
-        "—",
+        "joystick",
         "—"
       ]
     },
     "2": {
       "hits": 15,
       "color": [
-        60,
-        200,
-        120
+        235,
+        235,
+        235
       ],
       "mods": [
-        "remap",
+        "random",
         "—",
         "—",
         "—"
@@ -88,13 +88,13 @@
     "3": {
       "hits": 15,
       "color": [
-        90,
-        200,
-        255
+        235,
+        235,
+        235
       ],
       "mods": [
         "spin",
-        "—",
+        "memory",
         "—",
         "—"
       ]
@@ -102,9 +102,9 @@
     "4": {
       "hits": 15,
       "color": [
-        255,
-        170,
-        80
+        235,
+        235,
+        235
       ],
       "mods": [
         "spin",
@@ -116,9 +116,9 @@
     "5": {
       "hits": 15,
       "color": [
-        180,
-        120,
-        255
+        235,
+        235,
+        235
       ],
       "mods": [
         "memory",
