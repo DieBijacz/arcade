@@ -1312,6 +1312,45 @@ class TimeBar:
             ty = bar_y - t.get_height() - TIMER_LABEL_GAP
             g.screen.blit(t, (tx, ty))
 
+class PausableCountdown:
+    def __init__(self, now_fn):
+        self._now = now_fn
+        self.remaining = 0.0
+        self.running = False
+        self._t0 = 0.0
+
+    def set(self, seconds: float):
+        self.remaining = max(0.0, float(seconds))
+        self.running = False
+        self._t0 = 0.0
+
+    def start(self, seconds: float):
+        self.set(seconds)
+        self.resume()
+
+    def stop(self):
+        if self.running:
+            self.remaining = max(0.0, self.remaining - (self._now() - self._t0))
+            self.running = False
+
+    def resume(self):
+        if not self.running and self.remaining > 0.0:
+            self._t0 = self._now()
+            self.running = True
+
+    def get(self) -> float:
+        if not self.running:
+            return self.remaining
+        return max(0.0, self.remaining - (self._now() - self._t0))
+
+    def expired(self) -> bool:
+        return self.get() <= 0.0
+
+    def reset(self):
+        self.remaining = 0.0
+        self.running = False
+        self._t0 = 0.0
+
 # ========= GAME =========
 class Game:
 
@@ -1327,6 +1366,8 @@ class Game:
 
         self.w, self.h = self.screen.get_size()
         self.clock = pygame.time.Clock()
+        self.timer_timed = PausableCountdown(self.now)  
+        self.timer_speed = PausableCountdown(self.now)   
 
         # --- window ---
         self.last_windowed_size = tuple(CFG.get("display", {}).get("windowed_size", WINDOWED_DEFAULT_SIZE))
@@ -1367,17 +1408,14 @@ class Game:
         self.streak = 0
         self.best_streak = 0 
         self.final_total = 0
+        self.is_new_best = False
         self.lives = MAX_LIVES
 
         self.target: Optional[str] = None
-        self.target_deadline: Optional[float] = None
         self.target_time = TARGET_TIME_INITIAL
 
-        self.pause_start = 0.0
         self.pause_until = 0.0
         self.symbol_spawn_time = 0.0
-        self.time_left = TIMED_DURATION
-        self._last_tick = 0.0
         self.highscore = int(CFG.get("highscore", 0))
 
         # --- level cfg / ring state ---
@@ -1502,9 +1540,11 @@ class Game:
     def end_game(self) -> None:
         self.scene = Scene.OVER
 
+        self.final_total = int(self.score + self.best_streak)
+
         # total = końcowy wynik (score + best_streak)
-        self.final_total = int(max(0, self.score) + max(0, self.best_streak))
-        if self.final_total > self.highscore:
+        self.is_new_best = self.final_total > self.highscore
+        if self.is_new_best:
             self.highscore = self.final_total
             CFG["highscore"] = int(self.highscore)
             save_config({"highscore": CFG["highscore"]})
@@ -1512,12 +1552,22 @@ class Game:
         if self.music_ok:
             pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
 
-
     # ---- Czas i proste utilsy ----
 
     def now(self) -> float:
         return time.time()
   
+    def stop_timer(self):
+        self.timer_timed.stop()
+        self.timer_speed.stop()
+
+    def start_timer(self):
+        if self.scene is Scene.GAME:
+            if self.mode is Mode.TIMED:
+                self.timer_timed.resume()
+            elif self.mode is Mode.SPEEDUP:
+                self.timer_speed.resume()
+
     def px(self, v: float) -> int:
         return max(1, int(round(v * getattr(self, "ui_scale", 1.0))))
 
@@ -1535,15 +1585,11 @@ class Game:
         now = self.now()
         self.exit_dir_pos = pos
         self.fx.start_exit_slide(self.target, duration=EXIT_SLIDE_SEC)
-
-        self.pause_start = now
         self.pause_until = max(self.pause_until, now + EXIT_SLIDE_SEC)
-
         self.target = None
-        self.target_deadline = None
 
+        self.stop_timer()
         return True
-
 
     @staticmethod
     def _ease_out_cubic(t: float) -> float:
@@ -2165,6 +2211,8 @@ class Game:
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
 
     def reset_game_state(self) -> None:
+        self.timer_timed.reset()
+        self.timer_speed.reset()
         self.level = 1
         self.hits_in_level = 0
         self.level_goal = LEVELS[1].hits_required
@@ -2172,16 +2220,13 @@ class Game:
         self.streak = 0
         self.best_streak = 0 
         self.final_total = 0
+        self.is_new_best = False
         self.lives = int(self.settings.get("lives", MAX_LIVES))
         self.rules.install([])
         self.target = None
-        self.target_deadline = None
         self.target_time = float(self.settings.get("target_time_initial", TARGET_TIME_INITIAL))
         self.symbol_spawn_time = 0.0
-        self.pause_start = 0.0
         self.pause_until = 0.0
-        self.time_left = float(self.settings.get("timed_duration", TIMED_DURATION))
-        self._last_tick = self.now()
         self.timed_active_mods = []
         self.timed_hits_since_roll = 0
         self.level_cfg.control_flip_lr_ud = False
@@ -2233,27 +2278,29 @@ class Game:
         prev = self.target
         choices = [s for s in SYMS if s != prev] if prev else SYMS
         self.target = random.choice(choices)
-        self.target_deadline = self.now() + self.target_time if self.mode is Mode.SPEEDUP else None
         self.symbol_spawn_time = self.now()
         self.fx.stop_pulse('symbol')
         self.fx.stop_pulse('timer')
 
+        if self.mode is Mode.SPEEDUP and self.scene is Scene.GAME:
+            self.timer_speed.start(self.target_time)   # <= NOWE
+
     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
         now = self.now()
         self.banner.start(now, from_pinned=from_pinned)
-        self.pause_start = now
         self.pause_until = max(self.pause_until, now + self.banner.total)
         if self.mode is Mode.TIMED:
-            self.time_left += float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
+            bonus = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
+            self.timer_timed.set(self.timer_timed.get() + bonus)
         if self.level_cfg.memory_mode:
             self.memory_preview_armed = True
             self.memory_hide_deadline = 0.0
 
+        self.stop_timer()
+
     def _enter_gameplay_after_instruction(self) -> None:
         self.scene = Scene.GAME
         self.tutorial = None
-        if self.mode is Mode.TIMED:
-            self._last_tick = self.now()
 
         # Memory – jak było...
         if self.level_cfg.memory_mode:
@@ -2280,7 +2327,12 @@ class Game:
             self.new_target()
         else:
             self.target = None
-            self.target_deadline = None
+        
+        # uruchom odpowiedni timer
+        if self.mode is Mode.TIMED:
+            self.timer_timed.start(float(self.settings.get("timed_duration", TIMED_DURATION)))
+        elif self.mode is Mode.SPEEDUP and self.target:
+            self.timer_speed.start(self.target_time)
 
     def _cleanup_exit_slide_if_ready(self) -> None:
         if not self.exit_dir_pos:
@@ -2441,6 +2493,10 @@ class Game:
                 self.best_streak = self.streak
             self.score += 1
 
+            if self.mode is Mode.TIMED:
+                gain = float(self.settings.get("timed_gain", 1.0))
+                self.timer_timed.set(self.timer_timed.get() + gain)
+
             # pulse
             self.fx.trigger_pulse('score')
             try:
@@ -2478,6 +2534,10 @@ class Game:
             if self.hits_in_level >= self.level_goal:
                 self.level_up()
                 if self.scene is Scene.INSTRUCTION:
+                    # nic nie ma tykać w tle
+                    self.target = None
+                    self.fx.clear_exit()
+                    self.exit_dir_pos = None
                     self._lock_inputs()
                     return
 
@@ -2495,10 +2555,11 @@ class Game:
         self.fx.trigger_glitch()
 
         if self.mode is Mode.TIMED:
-            self.time_left -= float(self.settings.get("timed_penalty", 1.0))
-            if self.time_left <= 0.0:
-                self.time_left = 0.0
+            pen = float(self.settings.get("timed_penalty", 1.0))
+            self.timer_timed.set(self.timer_timed.get() - pen)
+            if self.timer_timed.expired():
                 self.end_game()
+
         else:  # SPEEDUP
             if self.lives_enabled():
                 self.lives -= 1
@@ -2519,20 +2580,10 @@ class Game:
         paused = banner_active or (now < self.pause_until)
         if paused:
             _ = iq.pop_all()
-            self._last_tick = now       # TIMED nie traci czasu
+            self.stop_timer()     
             return
-
-        # rezumpcja po pauzie: skompensuj deadline SPEED-UP
-        if self.pause_until and now >= self.pause_until:
-            paused_time = max(0.0, self.pause_until - (self.pause_start or self.pause_until))
-            self.pause_start = 0.0
-            self.pause_until = 0.0
-
-            if self.target_deadline is not None and self.exit_dir_pos is None:
-                self.target_deadline += paused_time
-
-            self._last_tick = now
-            self._cleanup_exit_slide_if_ready()
+        else:
+            self.start_timer()
 
         if (self.scene is Scene.GAME 
             and self.target is None 
@@ -2542,37 +2593,26 @@ class Game:
             self.new_target()
 
         # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
-        if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP and
-            self.target is not None and self.target_deadline is not None and
-            self.target_time > 0):
-
-            now = self.now()
-            remaining = max(0.0, self.target_deadline - now)
+        if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP
+            and self.target is not None and self.target_time > 0):
+            remaining = self.timer_speed.get()
             left_ratio = remaining / max(1e-6, self.target_time)
-
             if left_ratio <= 0.5:
-                # symbol — jednorazowo przy pierwszym wejściu poniżej 50% (opcjonalnie)
                 if not self.fx.is_pulse_active('symbol'):
-                    # jeśli nie chcesz jednorazowego symbolu, usuń tę linijkę
                     self.fx.trigger_pulse_symbol()
-
-                # timer — ma pulsować CAŁY czas od 50% do końca:
                 if not self.fx.is_pulse_active('timer'):
                     self.fx.trigger_pulse('timer')
 
         # TIMED: upływ czasu
-        if self.mode is Mode.TIMED:
-            dt = max(0.0, now - (self._last_tick or now))
-            self.time_left -= dt
-            self._last_tick = now
-            if self.time_left <= 0.0:
-                self.time_left = 0.0
-                self.end_game()
-                return
+        if self.mode is Mode.TIMED and self.timer_timed.expired():
+            self.end_game()
+            return
 
         # SPEEDUP: timeout targetu
-        if (self.mode is Mode.SPEEDUP and self.target is not None and
-            self.target_deadline is not None and now > self.target_deadline):
+        if (self.mode is Mode.SPEEDUP
+            and self.scene is Scene.GAME           
+            and self.target is not None
+            and self.timer_speed.expired()):
             if self.lives_enabled():
                 self.lives -= 1
             self.streak = 0
@@ -3223,9 +3263,10 @@ class Game:
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
                 tdur = float(self.settings.get("timed_duration", TIMED_DURATION))
-                self.timebar.draw(self.time_left / max(0.001, tdur), f"{self.time_left:.1f}s")
-            elif self.mode is Mode.SPEEDUP and self.target_deadline is not None and self.target_time > 0:
-                remaining = max(0.0, self.target_deadline - self.now())
+                left = self.timer_timed.get()
+                self.timebar.draw(left / max(0.001, tdur), f"{left:.1f}s")
+            if self.mode is Mode.SPEEDUP and self.target_time > 0:
+                remaining = self.timer_speed.get()
                 ratio = remaining / max(0.001, self.target_time)
                 self.timebar.draw(ratio, f"{remaining:.1f}s")
 
@@ -3290,8 +3331,8 @@ class Game:
             "swapped": False, "from_layout": dict(self.ring_layout),
             "to_layout": self._pick_new_ring_layout(),
         })
-        self.pause_start = now
         self.pause_until = max(self.pause_until, now + self.rot_anim["dur"])  
+        self.stop_timer()
 
     def _update_ring_rotation_anim(self) -> float:
         if not self.rot_anim["active"]:
@@ -3480,7 +3521,7 @@ class Game:
                 cx, cy = self.w // 2, self.h // 2
 
                 # 1) TOTAL (duży)
-                total_val = max(0, int(self.final_total or (self.score + self.streak)))
+                total_val = max(0, int(self.final_total))
                 total_surf = self.draw_text(
                     str(total_val),
                     color=SCORE_VALUE_COLOR,
@@ -3504,7 +3545,7 @@ class Game:
                 )
 
                 # 3) Badge NEW BEST! jeśli pobity rekord
-                if total_val >= self.highscore:
+                if self.is_new_best:
                     badge = "NEW BEST!"
                     bx = cx - self.font.size(badge)[0] // 2
                     by = cy - total_surf.get_height() // 2 - self.px(18)
