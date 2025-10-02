@@ -1507,6 +1507,10 @@ class Game:
         self.settings.setdefault("timed_difficulty", "EASY")   
         self.settings.setdefault("timed_mod_every_hits",int(CFG.get("timed", {}).get("mod_every_hits", 6)))
         self.settings.setdefault("memory_hide_sec", float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
+        self.settings.setdefault("timed_enable_remap",   True)
+        self.settings.setdefault("timed_enable_spin",    True)
+        self.settings.setdefault("timed_enable_memory",  True)
+        self.settings.setdefault("timed_enable_joystick",True)
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1639,6 +1643,7 @@ class Game:
         return 1 if diff == "EASY" else (2 if diff == "MEDIUM" else 3)
 
     def _timed_apply_active_mods(self) -> None:
+        self._timed_prune_disallowed()
         mods = set(self.timed_active_mods)
         self.level_cfg.control_flip_lr_ud = ("joystick" in mods)
         self._recompute_keymap()
@@ -1656,19 +1661,31 @@ class Game:
             self.rules.current_mapping = None
 
     def _timed_roll_mod(self) -> None:
-        pool = ["remap", "spin", "memory", "joystick"]
-        slots = self._timed_slots()
+        import random as _r
+        allowed = self._timed_allowed_pool()
+        if not allowed:
+            self.timed_active_mods = []
+            self._timed_apply_active_mods()
+            return
+
+        slots = min(self._timed_slots(), len(allowed))
+
+        self._timed_prune_disallowed()
+        self.timed_active_mods = list(dict.fromkeys(self.timed_active_mods)) 
 
         if len(self.timed_active_mods) < slots:
-            choices = [m for m in pool if m not in self.timed_active_mods]
-            if choices:
-                pick = random.choice(choices)
-                self.timed_active_mods.append(pick)
+            choices = [m for m in allowed if m not in self.timed_active_mods]
+            _r.shuffle(choices)
+            need = slots - len(self.timed_active_mods)
+            self.timed_active_mods += choices[:need]
         else:
-            if self.timed_active_mods:
-                old = self.timed_active_mods.pop(0)
-                choices = [m for m in pool if m not in self.timed_active_mods and m != old]
-                self.timed_active_mods.append(random.choice(choices or [old]))
+            old = self.timed_active_mods.pop(0)
+            choices = [m for m in allowed if m not in self.timed_active_mods and m != old]
+            pick = _r.choice(choices) if choices else old
+            if pick not in self.timed_active_mods:
+                self.timed_active_mods.append(pick)
+
+        self.timed_active_mods = self.timed_active_mods[:slots]
 
         self._timed_apply_active_mods()
         if "spin" in self.timed_active_mods:
@@ -1676,6 +1693,41 @@ class Game:
         if "remap" in self.timed_active_mods:
             self.rules.roll_mapping(SYMS)
             self._start_mapping_banner(from_pinned=False)
+
+    def _timed_allowed_pool(self) -> list[str]:
+        pool = []
+        if self.settings.get("timed_enable_remap", True):    pool.append("remap")
+        if self.settings.get("timed_enable_spin", True):     pool.append("spin")
+        if self.settings.get("timed_enable_memory", True):   pool.append("memory")
+        if self.settings.get("timed_enable_joystick", True): pool.append("joystick")
+        return pool
+
+    def _timed_prune_disallowed(self) -> None:
+        allowed = set(self._timed_allowed_pool())
+        self.timed_active_mods = [m for m in self.timed_active_mods if m in allowed]
+
+    def _timed_fill_to_slots(self) -> None:
+        allowed = [m for m in self._timed_allowed_pool()]
+        if not allowed:
+            self.timed_active_mods = []
+            return
+        slots = max(0, min(self._timed_slots(), len(allowed)))
+
+        # usuń duble i ogranicz do allowed
+        seen = set()
+        clean = []
+        for m in self.timed_active_mods:
+            if m in allowed and m not in seen:
+                clean.append(m); seen.add(m)
+        self.timed_active_mods = clean[:slots]
+
+        # dopełnij brakujące — losując z allowed \ active
+        import random as _r
+        while len(self.timed_active_mods) < slots:
+            choices = [m for m in allowed if m not in self.timed_active_mods]
+            if not choices:
+                break
+            self.timed_active_mods.append(_r.choice(choices))
 
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
@@ -1914,6 +1966,11 @@ class Game:
             ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",            "timed_penalty"),
             ("Rule bonus",    f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s","timed_rule_bonus"),
             ("Memory hide after", f"{float(self.settings.get('memory_hide_sec', MEMORY_HIDE_AFTER_SEC)):.1f}s", "memory_hide_sec"),
+            ("— MECHANICS —", "", None),
+            ("Remap",     "ON" if self.settings.get("timed_enable_remap", True) else "OFF",         "timed_enable_remap"),
+            ("Spin",      "ON" if self.settings.get("timed_enable_spin", True) else "OFF",          "timed_enable_spin"),
+            ("Memory",    "ON" if self.settings.get("timed_enable_memory", True) else "OFF",        "timed_enable_memory"),
+            ("Inverted",  "ON" if self.settings.get("timed_enable_joystick", True) else "OFF",      "timed_enable_joystick"),
         ]
         return items
 
@@ -1969,11 +2026,21 @@ class Game:
             cur = self.settings.get("timed_difficulty", "EASY")
             i = (opts.index(cur) + delta) % len(opts)
             self.settings["timed_difficulty"] = opts[i]
+            self._timed_fill_to_slots()
+            self._timed_apply_active_mods()
             return
 
         if key == "timed_mod_every_hits":
             v = int(self.settings.get("timed_mod_every_hits", 6)) + delta
             self.settings["timed_mod_every_hits"] = max(1, min(20, v))
+            return
+        
+        if key in ("timed_enable_remap", "timed_enable_spin", "timed_enable_memory", "timed_enable_joystick"):
+            self.settings[key] = not bool(self.settings.get(key, True))
+            # od razu usuń niedozwolone z aktywnych i dopełnij, jeśli trzeba
+            self._timed_prune_disallowed()
+            self._timed_fill_to_slots()
+            self._timed_apply_active_mods()
             return
 
         if key == "settings_page":
@@ -2024,7 +2091,7 @@ class Game:
             v = int(self.settings.get("spin_every_hits", 5)) + delta
             self.settings["spin_every_hits"] = max(1, min(50, v))
             return
-
+        
         # --- per-level edits ---
         if key and key.startswith("level") and ("_hits" in key or "_color" in key):
             try:
@@ -2111,11 +2178,16 @@ class Game:
         self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
         self.settings.setdefault("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5)))
 
+        self.settings.setdefault("memory_hide_sec",  float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
+
         self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
         self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))
         self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
-        self.settings.setdefault("memory_hide_sec",  float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
+        self.settings.setdefault("timed_enable_remap",   True)
+        self.settings.setdefault("timed_enable_spin",    True)
+        self.settings.setdefault("timed_enable_memory",  True)
+        self.settings.setdefault("timed_enable_joystick",True)
 
         self.settings_idx = 0
         self.settings_move(0)   
@@ -2151,6 +2223,10 @@ class Game:
         payload["timed"]["rule_bonus"]      = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
         payload["timed"]["difficulty"]      = str(self.settings.get("timed_difficulty",   "EASY"))
         payload["timed"]["mod_every_hits"]  = int(self.settings.get("timed_mod_every_hits", 6))
+        payload["timed"]["allow_remap"]    = bool(self.settings.get("timed_enable_remap", True))
+        payload["timed"]["allow_spin"]     = bool(self.settings.get("timed_enable_spin", True))
+        payload["timed"]["allow_memory"]   = bool(self.settings.get("timed_enable_memory", True))
+        payload["timed"]["allow_joystick"] = bool(self.settings.get("timed_enable_joystick", True))
 
         save_config(payload)
 
@@ -2638,8 +2714,8 @@ class Game:
                 if not self.fx.is_pulse_active('timer'):
                     self.fx.trigger_pulse('timer')
 
-        # TIMED: upływ czasu
-        if self.mode is Mode.TIMED and self.timer_timed.expired():
+        # TIMED: upływ czasu 
+        if self.mode is Mode.TIMED and self.scene is Scene.GAME and self.timer_timed.expired():
             self.end_game()
             return
 
@@ -3674,13 +3750,12 @@ class Game:
                 header_measured = False
                 for (label, value, key) in items:
                     if key == "settings_page":
-                        continue  # selektor widoku nie jest wierszem listy
-
+                        continue
                     if key is None:
-                        # rysujemy/odmierzamy tylko JEDEN nagłówek, pasujący do bieżącej zakładki
                         if header_measured:
                             continue
-                        t = SECTION_TITLES[self.settings_page]
+                        raw = (label or "")
+                        t = raw.strip("— ").strip().upper() or SECTION_TITLES[self.settings_page]
                         pad_x = self.px(12); pad_y = self.px(6)
                         tws, ths = self.settings_font.size(t)
                         row_h = ths + 2 * pad_y
@@ -3728,8 +3803,9 @@ class Game:
                     if key is None:
                         if header_drawn:
                             continue
-                        # rysujemy JEDEN nagłówek odpowiadający aktualnej zakładce
-                        t = SECTION_TITLES[self.settings_page]
+                        # Użyj tekstu z label, jeśli podany (np. "— MECHANICS —")
+                        raw = (label or "")
+                        t = raw.strip("— ").strip().upper() or SECTION_TITLES[self.settings_page]
                         pad_x = self.px(12); pad_y = self.px(6)
                         tws, ths = self.settings_font.size(t)
                         w = tws + 2 * pad_x
