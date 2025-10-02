@@ -23,7 +23,7 @@
     "rule_bonus": 0.0,
     "gain": 0.5000000000000001,
     "penalty": 1.0,
-    "difficulty": "EASY",
+    "difficulty": "MEDIUM",
     "mod_every_hits": 10,
     "allow_remap": true,
     "allow_spin": true,
@@ -31,7 +31,7 @@
     "allow_joystick": true,
     "remap_every_hits": 5,
     "spin_every_hits": 1,
-    "memory_hide_sec": 1.0
+    "memory_hide_sec": 0.5
   },
   "rules": {
     "every_hits": 10,

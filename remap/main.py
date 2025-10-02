@@ -1489,6 +1489,8 @@ class Game:
 
         self.timed_active_mods: list[str] = []     # aktualnie aktywne mody w TIMED
         self.timed_hits_since_roll: int = 0
+        self._last_timed_mods: list[str] = []
+        self._timed_mods_changed_at: float = 0.0
         
         # memory (L5)
         self.memory_show_icons = True
@@ -1661,6 +1663,7 @@ class Game:
         return 1 if diff == "EASY" else (2 if diff == "MEDIUM" else 3)
 
     def _timed_apply_active_mods(self) -> None:
+        old = list(self.timed_active_mods)
         self._timed_prune_disallowed()
         mods = set(self.timed_active_mods)
         self.level_cfg.control_flip_lr_ud = ("joystick" in mods)
@@ -1678,6 +1681,9 @@ class Game:
         else:
             self.rules.install([])
             self.rules.current_mapping = None
+        if old != self.timed_active_mods:
+            self._last_timed_mods = list(self.timed_active_mods)
+            self._timed_mods_changed_at = self.now()
 
     def _timed_roll_mod(self) -> None:
         import random as _r
@@ -2170,7 +2176,7 @@ class Game:
             "timed_gain": 0.1,      
             "timed_penalty": 0.1,   
             "memory_hide_sec": 0.5,
-            "timed_memory_hide_sec": 0.5,
+            "timed_memory_hide_sec": 0.1,
         }.get(key, 0.0)
 
         if step == 0.0:
@@ -2866,18 +2872,102 @@ class Game:
         self.screen.blit(chip, (x, y))
         return pygame.Rect(x, y, w, h)
 
-    def _draw_mod_chip(self, text: str, x: int, y: int, col, *, scale: float = 1.0) -> pygame.Rect:
-        display = "inverted" if text == "joystick" else text
+    def _draw_mod_chip(self, tag: str, x: int, y: int, *, scale: float = 1.0) -> pygame.Rect:
+        label = ("INVERTED" if tag == "joystick" else tag).upper()
+        col_key = "invert" if tag == "joystick" else tag
+        col = MOD_COLOR.get(col_key, INK)
         pad_x = int(self.px(8) * scale)
         pad_y = int(self.px(4) * scale)
-        tw, th = self.font.size(display.upper())
+        tw, th = self.font.size(label)
         w, h = int(tw * scale) + pad_x * 2, int(th * scale) + pad_y * 2
         rect = pygame.Rect(x, y, w, h)
-        self._draw_round_rect(self.screen, rect, (20,22,30,160),
-                            border=(*col, 220), border_w=1, radius=int(self.px(10) * scale))
-        self.draw_text(display.upper(), pos=(x + pad_x, y + pad_y),
-                    font=self.font, color=col, shadow=True, glitch=False, scale=scale)
+        self._draw_round_rect(
+            self.screen, rect, (20, 22, 30, 160),
+            border=(*col, 220), border_w=1, radius=int(self.px(10) * scale)
+        )
+        self.draw_text(
+            label, pos=(x + pad_x, y + pad_y),
+            font=self.font, color=col, shadow=True, glitch=False, scale=scale
+        )
         return rect
+
+    def _draw_timed_mod_chips(self) -> None:
+        if self.mode is not Mode.TIMED or self.scene is not Scene.GAME:
+            return
+        mods = list(self.timed_active_mods)
+        if not mods:
+            return
+
+        # — rysujemy wewnątrz kapsuły SCORE, przy dolnej krawędzi —
+        cap = self.score_capsule_rect
+        pad_x = self.px(10)
+        pad_y = self.px(8)
+        inner = cap.inflate(-pad_x * 2, -pad_y * 2)
+
+        # wysokość „stopki” – trochę większa niż linia fontu
+        footer_h = int(self.font.get_height() * 1.25)
+        footer = pygame.Rect(inner.left, inner.bottom - footer_h, inner.width, footer_h)
+
+        # animacja po zmianie zestawu modów
+        scale = 1.0
+        if self._timed_mods_changed_at > 0.0:
+            t = self.now() - self._timed_mods_changed_at
+            if t <= 0.9:
+                k = max(0.0, min(1.0, t / 0.9))
+                scale = 1.0 + (1.14 - 1.0) * (1.0 - (1.0 - k) ** 3)
+            else:
+                self._timed_mods_changed_at = 0.0
+
+        gap = self.px(6)
+
+        def sizes_for(s: float) -> list[tuple[int, int]]:
+            out = []
+            for m in mods:
+                label = ("INVERTED" if m == "joystick" else m).upper()
+                tw, th = self.font.size(label)
+                padx = int(self.px(8) * s)
+                pady = int(self.px(4) * s)
+                w = int(tw * s) + padx * 2
+                h = int(th * s) + pady * 2
+                out.append((w, h))
+            return out
+
+        sizes = sizes_for(scale)
+        total_w = sum(w for w, _ in sizes) + gap * (len(sizes) - 1)
+
+        # spróbuj zmieścić w jednej linii przez zmniejszenie skali
+        if total_w > footer.width:
+            k = footer.width / max(1, total_w)
+            scale = max(0.72, min(scale, k))
+            sizes = sizes_for(scale)
+            total_w = sum(w for w, _ in sizes) + gap * (len(sizes) - 1)
+
+        # jeśli wciąż za szeroko – użyj dwóch wierszy
+        two_rows = total_w > footer.width
+
+        def draw_row(row_items: list[tuple[str, int, int]], y: int) -> None:
+            row_w = sum(w for _, w, _ in row_items) + gap * (len(row_items) - 1)
+            x = footer.centerx - row_w // 2
+            for tag, w, _h in row_items:
+                self._draw_mod_chip(tag, x, y, scale=scale)
+                x += w + gap
+
+        labels = [m for m in mods]  # „joystick” pozostaje tagiem – _draw_mod_chip zrobi INVERTED
+
+        if not two_rows:
+            row = list(zip(labels, [w for w, _ in sizes], [h for _, h in sizes]))
+            y = footer.centery - (max((h for _, _, h in row), default=0) // 2)
+            draw_row(row, y)
+        else:
+            mid = (len(labels) + 1) // 2
+            sizes1, sizes2 = sizes[:mid], sizes[mid:]
+            row1 = list(zip(labels[:mid], [w for w, _ in sizes1], [h for _, h in sizes1]))
+            row2 = list(zip(labels[mid:],   [w for w, _ in sizes2], [h for _, h in sizes2]))
+            h1 = max((h for _, _, h in row1), default=0)
+            y1 = footer.top + max(0, (footer.height - h1 * 2 - self.px(4)) // 2)
+            y2 = y1 + h1 + self.px(4)
+            draw_row(row1, y1)
+            draw_row(row2, y2)
 
     def _draw_cell_underline(self, cell: pygame.Rect, *, inset_px: int, thickness: int) -> None:
         r = cell.inflate(-inset_px*2, -inset_px*2)
@@ -2972,16 +3062,15 @@ class Game:
                                 pos=(cell.centerx - int(tw*scale)/2, cell.centery - int(th*scale)/2),
                                 color=(170,180,190), font=self.font, shadow=True, glitch=False, scale=scale)
                 else:
-                    # policz rozmiar chipa tak jak _draw_mod_chip, żeby go wycentrować
+                    label = ("INVERTED" if tag == "joystick" else tag).upper()
                     pad_x = int(self.px(8) * scale)
                     pad_y = int(self.px(4) * scale)
-                    tw, th = self.font.size(tag.upper())
+                    tw, th = self.font.size(label)
                     w = int(tw * scale) + pad_x * 2
                     h = int(th * scale) + pad_y * 2
                     chip_x = int(cell.centerx - w/2)
                     chip_y = int(cell.centery - h/2)
-                    col = MOD_COLOR.get("memory" if tag == "memory" else ("invert" if tag == "joystick" else tag), INK)
-                    self._draw_mod_chip(tag, chip_x, chip_y, col, scale=scale)
+                    self._draw_mod_chip(tag, chip_x, chip_y, scale=scale)
                 self._level_table_cells[(row, 2 + c)] = cell
                 cx += col_w[2 + c]
 
@@ -3412,6 +3501,8 @@ class Game:
                 tdur = float(self.settings.get("timed_duration", TIMED_DURATION))
                 left = self.timer_timed.get()
                 self.timebar.draw(left / max(0.001, tdur), f"{left:.1f}s")
+                self._draw_timed_mod_chips()
+
             if self.mode is Mode.SPEEDUP and self.target_time > 0:
                 remaining = self.timer_speed.get()
                 ratio = remaining / max(0.001, self.target_time)
