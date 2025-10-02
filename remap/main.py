@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import math
 import os
 import random
@@ -9,9 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
 import pygame
-
 from .config import CFG, save_config, persist_windowed_size
 from .settings import make_runtime_settings, clamp_settings, commit_settings
 
@@ -103,6 +100,7 @@ TIMED_DURATION = CFG["timed"]["duration"]                    # czas całej rundy
 RULE_EVERY_HITS = CFG["rules"]["every_hits"]                 # co ile trafień losujemy nową regułę (poziom 2+)
 MAX_LIVES = CFG["lives"]                                     # liczba żyć w SPEEDUP (jeśli >0)
 ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))  # bonus sekund po wylosowaniu reguły (TIMED)
+MEMORY_HIDE_AFTER_SEC = float(CFG.get("memory_hide_sec", 1.0))
 
 # Rozmiar i animacja symbolu celu
 CENTER_Y_FACTOR = 0.58            # pozycja centralnego symbolu
@@ -201,10 +199,6 @@ RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
 RULE_BANNER_MIN_W_FACTOR = 0.90   # minimalna szerokość panelu względem ekranu
 RULE_BANNER_FONT_CENTER_PX = 64
 RULE_BANNER_FONT_PINNED_PX = 40
-
-# --- Memory (ring hide conditions) ---
-MEMORY_HIDE_AFTER_MOVES = 1      # po ilu ruchach znikają ikony
-MEMORY_HIDE_AFTER_SEC   = 3.0    # po ilu sekundach znikają ikony
 
 # --- Input Ring (wokół symbolu celu)
 RING_RADIUS_FACTOR = 1           # promień ringu jako ułamek rozmiaru docelowego symbolu
@@ -1255,8 +1249,13 @@ class InputRing:
             for L in layers:
                 blit_to_out(L)
 
-        # --- Icons on the ring (same as before) ---
-        if not (g.level_cfg.memory_mode and not g.memory_show_icons):
+        # --- Icons on the ring (show during spin even if memory hid them) ---
+        icons_visible = True
+        if g.level_cfg.memory_mode and not g.memory_show_icons:
+            # jeśli memory ukryło ikony, to pokaż je NA CZAS OBROTU
+            icons_visible = bool(g.rot_anim.get("active", False))
+
+        if icons_visible:
             icon_size = int(base_size * RING_ICON_SIZE_FACTOR)
             pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
             active_layout = layout if layout is not None else g.ring_layout
@@ -1266,13 +1265,11 @@ class InputRing:
                 size  = max(1, int(icon_size * scale))
                 rect  = pygame.Rect(0, 0, size, size)
 
-                # map to 'out' surface space
                 ox = C + (ix - cx)
                 oy = C + (iy - cy)
                 rect.center = (ox, oy)
 
                 self.g.draw_symbol(out, name, rect)
-
 
         # apply additional gameplay rotation (layout transition) if any
         if abs(spin_deg) > 0.0001:
@@ -1471,7 +1468,6 @@ class Game:
 
         # (stare – nie użyjemy już do ukrywania)
         self.memory_hide_deadline = 0.0 # nowy: kiedy najpóźniej ukryć ikony (czasowo)
-        self.memory_moves_count = 0     # nowy: ile ruchów wykonano zanim znikną
         self.memory_preview_armed = False   # czekaj na „sygnał” (np. koniec bannera), by wystartować odliczanie
         self._banner_was_active = False     # detekcja zbocza: koniec animacji bannera
 
@@ -1510,6 +1506,7 @@ class Game:
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
         self.settings.setdefault("timed_difficulty", "EASY")   
         self.settings.setdefault("timed_mod_every_hits",int(CFG.get("timed", {}).get("mod_every_hits", 6)))
+        self.settings.setdefault("memory_hide_sec", float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1633,9 +1630,8 @@ class Game:
             return
         if force_unhide:
             self.memory_show_icons = True
-        if reset_moves:
-            self.memory_moves_count = 0
-        self.memory_hide_deadline = self.now() + float(MEMORY_HIDE_AFTER_SEC)
+        hide_sec = float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
+        self.memory_hide_deadline = self.now() + max(0.1, hide_sec)
         self.memory_preview_armed = False
 
     def _timed_slots(self) -> int:
@@ -1875,13 +1871,14 @@ class Game:
     def settings_items(self):
         items: list[tuple[str, str, Optional[str]]] = []
 
-        cur_view = "BASIC" if self.settings_page == 0 else "ADVANCED"
+        # 0=BASIC, 1=TIMED, 2=SPEED-UP
+        cur_view = "BASIC" if self.settings_page == 0 else ("TIMED" if self.settings_page == 1 else "SPEED-UP")
         items += [("View", cur_view, "settings_page")]
 
-        # ===== BASIC =====
         if self.settings_page == 0:
+            # ===== BASIC =====
             items += [
-                ("— OGÓLNE —", "", None),
+                # ("— BASIC —", "", None),
                 ("Music volume",  f"{float(self.settings.get('music_volume', CFG['audio']['music_volume'])):.2f}", "music_volume"),
                 ("SFX volume",    f"{float(self.settings.get('sfx_volume',   CFG['audio']['sfx_volume'])):.2f}",   "sfx_volume"),
                 ("Fullscreen",    "ON" if self.settings.get('fullscreen', CFG['display'].get('fullscreen', True)) else "OFF", "fullscreen"),
@@ -1892,26 +1889,31 @@ class Game:
             ]
             return items
 
-        # ===== ADVANCED ===== 
+        if self.settings_page == 1:
+            # ===== SPEED-UP =====
+            items += [
+                # ("— SPEED-UP —", "", None),
+                ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
+                ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
+                ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
+                ("Remap every",   f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits",            "remap_every_hits"),
+                ("Rotate every",  f"{int(self.settings.get('spin_every_hits', 5))} hits",                           "spin_every_hits"),
+                ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
+                ("Levels active", f"{int(self.levels_active)}",                                                     "levels_active"),
+                ("Memory hide after", f"{float(self.settings.get('memory_hide_sec', MEMORY_HIDE_AFTER_SEC)):.1f}s", "memory_hide_sec"),
+            ]
+            return items
+
+        # ===== TIMED =====
         items += [
-            ("— TIMED —", "", None),
-            ("Difficulty",   f"{self.settings.get('timed_difficulty','EASY')}",        "timed_difficulty"),
-            ("New mod every",f"{int(self.settings.get('timed_mod_every_hits',6))} hits","timed_mod_every_hits"),
-            ("Initial time", f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s", "timed_duration"),
-            ("On correct",   f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",               "timed_gain"),
-            ("On wrong",     f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",            "timed_penalty"),
-            ("Rule bonus",   f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s","timed_rule_bonus"),
-
-            ("— SPEED-UP —", "", None),
-            ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
-            ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
-            ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
-            ("Remap every",  f"{int(self.settings.get('remap_every_hits', RULE_EVERY_HITS))} hits", "remap_every_hits"),
-            ("Rotate every",  f"{int(self.settings.get('spin_every_hits', 5))} hits", "spin_every_hits"),
-            ("Lives",         f"{int(self.settings.get('lives', MAX_LIVES))}",                                  "lives"),
-            ("Levels active", f"{int(self.levels_active)}", "levels_active"),
-
-            ("", "", None),   
+            # ("— TIMED —", "", None),
+            ("Difficulty",    f"{self.settings.get('timed_difficulty','EASY')}",        "timed_difficulty"),
+            ("New mod every", f"{int(self.settings.get('timed_mod_every_hits',6))} hits","timed_mod_every_hits"),
+            ("Initial time",  f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s", "timed_duration"),
+            ("On correct",    f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",               "timed_gain"),
+            ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",            "timed_penalty"),
+            ("Rule bonus",    f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s","timed_rule_bonus"),
+            ("Memory hide after", f"{float(self.settings.get('memory_hide_sec', MEMORY_HIDE_AFTER_SEC)):.1f}s", "memory_hide_sec"),
         ]
         return items
 
@@ -1975,14 +1977,14 @@ class Game:
             return
 
         if key == "settings_page":
-            self.settings_page = 0 if delta < 0 else 1
+            self.settings_page = (self.settings_page + (1 if delta > 0 else -1)) % 3  
             self.settings_idx = 0
             self.settings_scroll = 0.0
             self.settings_focus_table = False
             self._ensure_selected_visible()
-            self.fx.trigger_glitch(mag=0.95)      
-            self.fx.trigger_text_glitch()       
-            return  
+            self.fx.trigger_glitch(mag=0.95)
+            self.fx.trigger_text_glitch()
+            return
         
         if key == "glitch_mode":
             opts = ["NONE", "TEXT", "SCREEN", "BOTH"]
@@ -2066,9 +2068,10 @@ class Game:
             "music_volume": 0.05,
             "sfx_volume": 0.05,
             "timed_rule_bonus": 0.5,
-            "timed_duration": 1.0,   # NEW
-            "timed_gain": 0.1,       # NEW
-            "timed_penalty": 0.1,    # NEW
+            "timed_duration": 1.0,  
+            "timed_gain": 0.1,      
+            "timed_penalty": 0.1,   
+            "memory_hide_sec": 0.5,
         }.get(key, 0.0)
 
         if step == 0.0:
@@ -2078,9 +2081,13 @@ class Game:
         self.settings[key] = (cur + (step * delta)) if isinstance(cur, float) else (cur + delta)
         clamp_settings(self.settings)
 
+
         self.settings["timed_duration"] = max(1.0, float(self.settings.get("timed_duration", 60.0)))
         self.settings["timed_gain"]     = max(0.0, float(self.settings.get("timed_gain", 0.0)))
         self.settings["timed_penalty"]  = max(0.0, float(self.settings.get("timed_penalty", 0.0)))
+
+        if key == "memory_hide_sec":
+            self.settings["memory_hide_sec"] = max(0.5, float(self.settings["memory_hide_sec"]))
 
         if key == "music_volume" and self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
@@ -2108,6 +2115,7 @@ class Game:
         self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))
         self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))
         self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
+        self.settings.setdefault("memory_hide_sec",  float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
 
         self.settings_idx = 0
         self.settings_move(0)   
@@ -2132,9 +2140,11 @@ class Game:
         payload.setdefault("effects", {})["glitch_mode"] = self.settings["glitch_mode"]
         payload.setdefault("display", {})["fps"] = int(self.settings["fps"])
         payload.setdefault("rules", {})["every_hits"] = int(self.settings["remap_every_hits"])
-        payload["rules"]["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
-
         payload.setdefault("timed", {})
+
+        payload["rules"]["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
+        payload["memory_hide_sec"] = float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
+
         payload["timed"]["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
         payload["timed"]["gain"]            = float(self.settings.get("timed_gain",       1.0))
         payload["timed"]["penalty"]         = float(self.settings.get("timed_penalty",    1.0))
@@ -2333,10 +2343,9 @@ class Game:
         self.scene = Scene.GAME
         self.tutorial = None
 
-        # Memory – jak było...
+        # Memory
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
-            self.memory_moves_count = 0
             self.memory_hide_deadline = 0.0
             self.memory_preview_armed = True
 
@@ -2509,12 +2518,6 @@ class Game:
     def handle_input_symbol(self, name: str) -> None:
         if self.scene is not Scene.GAME or not self.target:
             return
-
-        # MEMORY ruchy
-        if self.level_cfg.memory_mode and self.memory_show_icons:
-            self.memory_moves_count += 1
-            if self.memory_moves_count >= MEMORY_HIDE_AFTER_MOVES:
-                self.memory_show_icons = False
 
         required = self.rules.apply(self.target)
         if name == required:
@@ -3608,53 +3611,41 @@ class Game:
                 tw, th = self.big.size(title_text)
                 self.draw_text(title_text, pos=(self.w / 2 - tw / 2, self.h * SETTINGS_TITLE_Y_FACTOR), font=self.big)
 
-                # --- View chips (BASIC / ADVANCED) ---
+                # --- View chips (BASIC / TIMED / SPEED-UP) ---
                 label_basic = "BASIC"
-                label_adv   = "ADVANCED"
+                label_timed = "TIMED"
+                label_spd   = "SPEED-UP"
                 f = self.settings_font
                 chip_gap = self.px(8)
                 chips_y = int(self.h * SETTINGS_TITLE_Y_FACTOR) + self.big.get_height() + self.px(10)
 
-                # Kursor stoi "na przełączniku", gdy zaznaczony jest ukryty wiersz settings_page (idx==0)
                 selected_on_switch = (not self.settings_focus_table and self.settings_idx == 0)
 
                 def chip(txt, x, active, hover=False):
                     pad_x = self.px(12); pad_y = self.px(6)
                     cw, ch = f.size(txt)
                     w, h = cw + 2 * pad_x, ch + 2 * pad_y
-
-                    # efekt "hover": lekka skala i jaśniejsze tło/obramowanie
                     scale = 1.06 if hover else 1.0
-                    scaled_w = int(w * scale)
-                    scaled_h = int(h * scale)
-                    draw_x = int(x - (scaled_w - w) / 2)   # utrzymaj wycentrowanie po skalowaniu
-                    draw_y = int(chips_y - (scaled_h - h) / 2)
-
+                    sw, sh = int(w * scale), int(h * scale)
+                    draw_x = int(x - (sw - w) / 2)
+                    draw_y = int(chips_y - (sh - h) / 2)
                     bg = (26, 30, 38, 240) if (active or hover) else (20, 22, 30, 160)
                     br = (140, 220, 255, 235) if (active or hover) else (80, 120, 160, 160)
-
-                    r = pygame.Rect(draw_x, draw_y, scaled_w, scaled_h)
+                    r = pygame.Rect(draw_x, draw_y, sw, sh)
                     self._draw_round_rect(self.screen, r, bg, border=br, border_w=2, radius=self.px(12))
+                    self.draw_text(txt, pos=(draw_x + (sw - cw)//2, draw_y + (sh - ch)//2),
+                                font=f, color=ACCENT, shadow=True, glitch=False)
+                    return sw
 
-                    # tekst nie skalowany (czytelność), wycentrowany w powiększonym kapslu
-                    self.draw_text(
-                        txt,
-                        pos=(draw_x + (scaled_w - cw)//2, draw_y + (scaled_h - ch)//2),
-                        font=f, color=ACCENT, shadow=True, glitch=False
-                    )
-                    return scaled_w
+                labels = [label_basic, label_spd, label_timed]
+                chip_widths = [f.size(t)[0] + self.px(24) for t in labels]
+                total_w = sum(chip_widths) + chip_gap * 2
+                start_x = self.w//2 - total_w//2
 
-                cx = self.w // 2
-                w1 = f.size(label_basic)[0] + self.px(24)
-                w2 = f.size(label_adv)[0]   + self.px(24)
-                start_x = cx - (w1 + chip_gap + w2) // 2
-
-                off = chip(label_basic, start_x,
-                           active=(self.settings_page == 0),
-                           hover=selected_on_switch)
-                _   = chip(label_adv,   start_x + off + chip_gap,
-                           active=(self.settings_page == 1),
-                           hover=selected_on_switch)
+                x = start_x
+                w_used = chip(label_basic, x, active=(self.settings_page == 0), hover=selected_on_switch and self.settings_page == 0); x += w_used + chip_gap
+                w_used = chip(label_spd,   x, active=(self.settings_page == 1), hover=selected_on_switch and self.settings_page == 1); x += w_used + chip_gap
+                _      = chip(label_timed, x, active=(self.settings_page == 2), hover=selected_on_switch and self.settings_page == 2)
 
                 # --- Layout/viewport for the list below chips ---
                 top_y = int(self.h * SETTINGS_LIST_Y_START_FACTOR)
@@ -3676,40 +3667,34 @@ class Game:
                 self._settings_row_tops = []
                 item_spacing = self.px(SETTINGS_ITEM_SPACING)
 
-                SECTION_TITLES = {
-                    "basic_0": "OGÓLNE",
-                    "adv_0":   "TIMED",
-                    "adv_1":   "SPEED-UP",
-                }
-
                 # --- POMIAR wysokości (scroll) — pomijamy settings_page ---
                 y_probe = top_y
-                sec_counter = -1
+                SECTION_TITLES = {0: "OGÓLNE", 1: "SPEED-UP", 2: "TIMED"}
+
+                header_measured = False
                 for (label, value, key) in items:
                     if key == "settings_page":
-                        continue  # selektor widoku nie jest rysowany jako wiersz
-                    if key is None:
-                        sec_counter += 1
-                        if self.settings_page == 0:
-                            if sec_counter > 0:
-                                continue
-                            t = SECTION_TITLES["basic_0"]
-                        else:
-                            if sec_counter > 1:
-                                continue
-                            t = SECTION_TITLES["adv_0" if sec_counter == 0 else "adv_1"]
+                        continue  # selektor widoku nie jest wierszem listy
 
+                    if key is None:
+                        # rysujemy/odmierzamy tylko JEDEN nagłówek, pasujący do bieżącej zakładki
+                        if header_measured:
+                            continue
+                        t = SECTION_TITLES[self.settings_page]
                         pad_x = self.px(12); pad_y = self.px(6)
                         tws, ths = self.settings_font.size(t)
                         row_h = ths + 2 * pad_y
                         self._settings_row_tops.append((y_probe, row_h))
                         y_probe += row_h + item_spacing
-                    else:
-                        label_surf = self.settings_font.render(label, True, INK)
-                        value_surf = self.settings_font.render(value, True, INK)
-                        row_h = max(label_surf.get_height(), value_surf.get_height())
-                        self._settings_row_tops.append((y_probe, row_h))
-                        y_probe += row_h + item_spacing
+                        header_measured = True
+                        continue
+
+                    # zwykły wiersz: liczymy wysokość na podstawie fontu
+                    label_surf = self.settings_font.render(label, True, INK)
+                    value_surf = self.settings_font.render(value, True, INK)
+                    row_h = max(label_surf.get_height(), value_surf.get_height())
+                    self._settings_row_tops.append((y_probe, row_h))
+                    y_probe += row_h + item_spacing
 
                 list_end_y = y_probe
 
@@ -3731,29 +3716,20 @@ class Game:
                 max_scroll = max(0, content_h - viewport.height)
                 self.settings_scroll = max(0.0, min(float(max_scroll), float(self.settings_scroll)))
 
-                # --- RENDER listy — pomijamy settings_page, selekcja wiersza 0 "odbiła" się na chipach ---
+                # --- RENDER listy — jeden nagłówek wg self.settings_page ---
                 y = top_y - int(self.settings_scroll)
-                sec_counter = -1
-                drawing_adv_section = -1
+                SECTION_TITLES = {0: "OGÓLNE", 1: "SPEED-UP", 2: "TIMED"}
 
+                header_drawn = False
                 for i, (label, value, key) in enumerate(items):
                     if key == "settings_page":
-                        # nie rysujemy wiersza – informacja o selekcji pokazana na chipach
-                        continue
+                        continue  # chipy u góry już pokazują widok
 
                     if key is None:
-                        sec_counter += 1
-                        if self.settings_page == 0:
-                            if sec_counter > 0:
-                                continue
-                            t = SECTION_TITLES["basic_0"]
-                        else:
-                            if sec_counter > 1:
-                                continue
-                            drawing_adv_section = sec_counter
-                            t = SECTION_TITLES["adv_0" if sec_counter == 0 else "adv_1"]
-
-                        # wycentrowany nagłówek sekcji (chip)
+                        if header_drawn:
+                            continue
+                        # rysujemy JEDEN nagłówek odpowiadający aktualnej zakładce
+                        t = SECTION_TITLES[self.settings_page]
                         pad_x = self.px(12); pad_y = self.px(6)
                         tws, ths = self.settings_font.size(t)
                         w = tws + 2 * pad_x
@@ -3761,20 +3737,20 @@ class Game:
                         x = self.w // 2 - w // 2
                         rect = pygame.Rect(int(x), int(y), int(w), int(h))
                         self._draw_round_rect(self.screen, rect, (22, 26, 34, 220),
-                                              border=(120, 200, 255, 230), border_w=2, radius=self.px(12))
+                                            border=(120, 200, 255, 230), border_w=2, radius=self.px(12))
                         self.draw_text(t, pos=(x + pad_x, y + pad_y),
-                                       font=self.settings_font, color=ACCENT, shadow=True, glitch=False)
+                                    font=self.settings_font, color=ACCENT, shadow=True, glitch=False)
                         y += h + item_spacing
+                        header_drawn = True
                         continue
 
-                    if self.settings_page == 1 and drawing_adv_section not in (0, 1):
-                        continue
-
+                    # zwykły wiersz ustawień
                     selected = (i == self.settings_idx and not self.settings_focus_table)
+                    value_to_draw = value
                     if selected and key == "highscore" and self.highscore != 0:
-                        value = "enter to reset"
+                        value_to_draw = "enter to reset"
 
-                    row_h = self._draw_settings_row(label=label, value=value, y=y, selected=selected)
+                    row_h = self._draw_settings_row(label=label, value=value_to_draw, y=y, selected=selected)
                     y += row_h + item_spacing
 
                 # --- Tabelka (tylko ADVANCED i tylko dla trybu SPEED-UP) ---

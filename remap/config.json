@@ -9,8 +9,8 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      770,
-      1369
+      441,
+      784
     ]
   },
   "speedup": {
@@ -65,9 +65,9 @@
         235
       ],
       "mods": [
-        "random",
-        "random",
-        "random",
+        "memory",
+        "—",
+        "—",
         "—"
       ]
     },
@@ -197,5 +197,6 @@
         "—"
       ]
     }
-  }
+  },
+  "memory_hide_sec": 1.0
 }
