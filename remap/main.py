@@ -14,6 +14,31 @@ from .settings import make_runtime_settings, clamp_settings, commit_settings
 
 PKG_DIR = Path(__file__).resolve().parent
 
+# ========= SETTINGS DEFAULTS (single source of truth) =========
+def _settings_defaults_from_cfg() -> list[tuple[str, object]]:
+    return [
+        # BASIC
+        ("glitch_mode", "BOTH"),  # NONE | TEXT | SCREEN | BOTH
+        ("fps", int(CFG.get("display", {}).get("fps", FPS))),
+        ("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS))),
+        ("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5))),
+        ("memory_hide_sec", float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
+        # TIMED
+        ("timed_duration", float(CFG.get("timed", {}).get("duration", TIMED_DURATION))),
+        ("timed_gain", float(CFG.get("timed", {}).get("gain", 1.0))),
+        ("timed_penalty", float(CFG.get("timed", {}).get("penalty", 1.0))),
+        ("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME))),
+        ("timed_difficulty", str(CFG.get("timed", {}).get("difficulty", "EASY"))),
+        ("timed_remap_every_hits", int(CFG.get("timed", {}).get("remap_every_hits", 6))),
+        ("timed_spin_every_hits", int(CFG.get("timed", {}).get("spin_every_hits", 5))),
+        ("timed_memory_hide_sec", float(CFG.get("timed", {}).get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
+        ("timed_mod_every_hits", int(CFG.get("timed", {}).get("mod_every_hits", 6))),
+        ("timed_enable_remap", bool(CFG.get("timed", {}).get("allow_remap", True))),
+        ("timed_enable_spin", bool(CFG.get("timed", {}).get("allow_spin", True))),
+        ("timed_enable_memory", bool(CFG.get("timed", {}).get("allow_memory", True))),
+        ("timed_enable_joystick", bool(CFG.get("timed", {}).get("allow_joystick", True))),
+    ]
+
 # ========= IMAGE LOADER (cache) =========
 
 class ImageStore:
@@ -82,7 +107,7 @@ SYMBOL_COLORS = {
 # Ogólne odstępy/układ
 PADDING = 0.06                   # margines sceny (proporcja szer./wys. okna)
 GAP = 0.04                       # przerwa między obiektami w siatce
-FPS = CFG["display"]["fps"]      # docelowy FPS (z configu)
+FPS = int(CFG.get("display", {}).get("fps", 60))    
 INPUT_ACCEPT_DELAY = 0.03
 TEXT_SHADOW_OFFSET = (2, 2)
 UI_RADIUS = 8
@@ -93,13 +118,13 @@ LEVELS_ACTIVE_FOR_NOW = 7        # faktycznie używana liczba poziomów
 LEVELS_MAX = 10
 
 # Tempo gry i tryby
-TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]  # startowy czas na reakcję (tryb SPEEDUP)
-TARGET_TIME_MIN = CFG["speedup"]["target_time_min"]          # dolne ograniczenie czasu reakcji
-TARGET_TIME_STEP = CFG["speedup"]["target_time_step"]        # zmiana czasu po każdym trafieniu
-TIMED_DURATION = CFG["timed"]["duration"]                    # czas całej rundy w trybie TIMED
-RULE_EVERY_HITS = CFG["rules"]["every_hits"]                 # co ile trafień losujemy nową regułę (poziom 2+)
-MAX_LIVES = CFG["lives"]                                     # liczba żyć w SPEEDUP (jeśli >0)
-ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))  # bonus sekund po wylosowaniu reguły (TIMED)
+TARGET_TIME_INITIAL = CFG["speedup"]["target_time_initial"]                      # startowy czas na reakcję (tryb SPEEDUP)
+TARGET_TIME_MIN = CFG["speedup"]["target_time_min"]                              # dolne ograniczenie czasu reakcji
+TARGET_TIME_STEP = CFG["speedup"]["target_time_step"]                            # zmiana czasu po każdym trafieniu
+TIMED_DURATION = float(CFG.get("timed", {}).get("duration", 60.0))               # czas całej rundy w trybie TIMED
+RULE_EVERY_HITS = int(CFG.get("rules", {}).get("every_hits", 3))                 # co ile trafień losujemy nową regułę (poziom 2+)
+MAX_LIVES = int(CFG.get("lives", 0))                                             # liczba żyć w SPEEDUP (jeśli >0)
+ADDITIONAL_RULE_TIME = float(CFG["timed"].get("rule_bonus", 5.0))                # bonus sekund po wylosowaniu reguły (TIMED)
 MEMORY_HIDE_AFTER_SEC = float(CFG.get("memory_hide_sec", 1.0))
 
 # Rozmiar i animacja symbolu celu
@@ -704,7 +729,7 @@ class TutorialPlayer:
                 eased = g._ease_out_cubic(prog)
 
                 r = int(base_size * RING_RADIUS_FACTOR)
-                pos_xy = {"TOP":(cx,cy-r), "RIGHT":(cx+r,cy), "LEFT":(cx-r,cy), "BOTTOM":(cx,cy+r)}
+                pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
                 tx, ty = pos_xy[target_pos]
                 ex = int(cx + (tx - cx) * 1.2 * eased)
                 ey = int(cy + (ty - cy) * 1.2 * eased)
@@ -820,9 +845,10 @@ class RuleManager:
 
     def roll_mapping(self, syms: List[str]) -> Tuple[str, str]:
         a = random.choice(syms)
-        b = random.choice([s for s in syms if s != a])
-        if self.current_mapping == (a, b):
-            b = random.choice([s for s in syms if s not in (a, b)])
+        b_choices = [s for s in syms if s != a]
+        if self.current_mapping and self.current_mapping[0] == a:
+            b_choices = [s for s in b_choices if s != self.current_mapping[1]] or b_choices
+        b = random.choice(b_choices)
         self.current_mapping = (a, b)
         return self.current_mapping
 
@@ -905,6 +931,7 @@ class EffectsManager:
         self.glitch_mag = 1.0
         self.text_glitch_active_until = 0.0
         self._pulses = {k: (0.0, 0.0) for k in self._pulses}
+        self._ring_pulses.clear()
 
     # -------- triggers --------
     def trigger_shake(self, duration: float = SHAKE_DURATION):
@@ -1495,22 +1522,8 @@ class Game:
         self.settings_idx = 0
         self.settings = make_runtime_settings(CFG)
 
-        # domyślne wartości wymagane od startu gry
-        self.settings.setdefault("glitch_mode", "BOTH")  # NONE | TEXT | SCREEN | BOTH
-        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
-        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
-        self.settings.setdefault("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5)))
-        self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
-        self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))       # +s za poprawną
-        self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))    # -s za złą
-        self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
-        self.settings.setdefault("timed_difficulty", "EASY")   
-        self.settings.setdefault("timed_mod_every_hits",int(CFG.get("timed", {}).get("mod_every_hits", 6)))
-        self.settings.setdefault("memory_hide_sec", float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
-        self.settings.setdefault("timed_enable_remap",   True)
-        self.settings.setdefault("timed_enable_spin",    True)
-        self.settings.setdefault("timed_enable_memory",  True)
-        self.settings.setdefault("timed_enable_joystick",True)
+        for k, v in _settings_defaults_from_cfg():
+            self.settings.setdefault(k, v)
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1634,9 +1647,14 @@ class Game:
             return
         if force_unhide:
             self.memory_show_icons = True
-        hide_sec = float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
+        hide_sec = self._memory_hide_seconds()
         self.memory_hide_deadline = self.now() + max(0.1, hide_sec)
         self.memory_preview_armed = False
+
+    def _memory_hide_seconds(self) -> float:
+        if self.mode is Mode.TIMED:
+            return float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
+        return float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
     def _timed_slots(self) -> int:
         diff = str(self.settings.get("timed_difficulty", "EASY"))
@@ -1652,8 +1670,9 @@ class Game:
             self.memory_show_icons = True
             self.memory_hide_deadline = 0.0
         if "remap" in mods:
+            every = int(self.settings.get("timed_remap_every_hits", 6))
+            self.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
             if not self.rules.current_mapping:
-                self.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=0)])
                 self.rules.roll_mapping(SYMS)
                 self._start_mapping_banner(from_pinned=False)
         else:
@@ -1690,9 +1709,6 @@ class Game:
         self._timed_apply_active_mods()
         if "spin" in self.timed_active_mods:
             self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-        if "remap" in self.timed_active_mods:
-            self.rules.roll_mapping(SYMS)
-            self._start_mapping_banner(from_pinned=False)
 
     def _timed_allowed_pool(self) -> list[str]:
         pool = []
@@ -1924,7 +1940,7 @@ class Game:
         items: list[tuple[str, str, Optional[str]]] = []
 
         # 0=BASIC, 1=TIMED, 2=SPEED-UP
-        cur_view = "BASIC" if self.settings_page == 0 else ("TIMED" if self.settings_page == 1 else "SPEED-UP")
+        cur_view = "BASIC" if self.settings_page == 0 else ("SPEED-UP" if self.settings_page == 1 else "TIMED")
         items += [("View", cur_view, "settings_page")]
 
         if self.settings_page == 0:
@@ -1958,19 +1974,20 @@ class Game:
 
         # ===== TIMED =====
         items += [
-            # ("— TIMED —", "", None),
-            ("Difficulty",    f"{self.settings.get('timed_difficulty','EASY')}",        "timed_difficulty"),
-            ("New mod every", f"{int(self.settings.get('timed_mod_every_hits',6))} hits","timed_mod_every_hits"),
+            ("Difficulty",    f"{self.settings.get('timed_difficulty','EASY')}",                 "timed_difficulty"),
+            ("New mod every", f"{int(self.settings.get('timed_mod_every_hits',6))} hits",        "timed_mod_every_hits"),
             ("Initial time",  f"{float(self.settings.get('timed_duration', TIMED_DURATION)):.1f}s", "timed_duration"),
-            ("On correct",    f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",               "timed_gain"),
-            ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",            "timed_penalty"),
+            ("On correct",    f"+{float(self.settings.get('timed_gain', 1.0)):.1f}s",            "timed_gain"),
+            ("On wrong",      f"-{float(self.settings.get('timed_penalty', 1.0)):.1f}s",         "timed_penalty"),
             ("Rule bonus",    f"{float(self.settings.get('timed_rule_bonus', ADDITIONAL_RULE_TIME)):.1f}s","timed_rule_bonus"),
-            ("Memory hide after", f"{float(self.settings.get('memory_hide_sec', MEMORY_HIDE_AFTER_SEC)):.1f}s", "memory_hide_sec"),
+            ("Remap every",   f"{int(self.settings.get('timed_remap_every_hits',6))} hits",      "timed_remap_every_hits"),
+            ("Rotate every",  f"{int(self.settings.get('timed_spin_every_hits',5))} hits",       "timed_spin_every_hits"),
+            ("Memory hide after", f"{float(self.settings.get('timed_memory_hide_sec', MEMORY_HIDE_AFTER_SEC)):.1f}s", "timed_memory_hide_sec"),
             ("— MECHANICS —", "", None),
-            ("Remap",     "ON" if self.settings.get("timed_enable_remap", True) else "OFF",         "timed_enable_remap"),
-            ("Spin",      "ON" if self.settings.get("timed_enable_spin", True) else "OFF",          "timed_enable_spin"),
-            ("Memory",    "ON" if self.settings.get("timed_enable_memory", True) else "OFF",        "timed_enable_memory"),
-            ("Inverted",  "ON" if self.settings.get("timed_enable_joystick", True) else "OFF",      "timed_enable_joystick"),
+            ("Remap",     "ON" if self.settings.get("timed_enable_remap", True) else "OFF",      "timed_enable_remap"),
+            ("Spin",      "ON" if self.settings.get("timed_enable_spin", True) else "OFF",       "timed_enable_spin"),
+            ("Memory",    "ON" if self.settings.get("timed_enable_memory", True) else "OFF",     "timed_enable_memory"),
+            ("Inverted",  "ON" if self.settings.get("timed_enable_joystick", True) else "OFF",   "timed_enable_joystick"),
         ]
         return items
 
@@ -2029,6 +2046,20 @@ class Game:
             self._timed_fill_to_slots()
             self._timed_apply_active_mods()
             return
+    
+        if key == "timed_remap_every_hits":
+            v = int(self.settings.get("timed_remap_every_hits", 6)) + delta
+            self.settings["timed_remap_every_hits"] = max(1, min(20, v))
+            # jeśli remap jest aktywny w TIMED – od razu ustaw częstotliwość w RuleManagerze
+            if self.mode is Mode.TIMED and "remap" in self.timed_active_mods:
+                self.rules.mapping_every_hits = int(self.settings["timed_remap_every_hits"])
+            return
+
+        if key == "timed_spin_every_hits":
+            v = int(self.settings.get("timed_spin_every_hits", 5)) + delta
+            self.settings["timed_spin_every_hits"] = max(1, min(50, v))
+            return
+
 
         if key == "timed_mod_every_hits":
             v = int(self.settings.get("timed_mod_every_hits", 6)) + delta
@@ -2139,6 +2170,7 @@ class Game:
             "timed_gain": 0.1,      
             "timed_penalty": 0.1,   
             "memory_hide_sec": 0.5,
+            "timed_memory_hide_sec": 0.5,
         }.get(key, 0.0)
 
         if step == 0.0:
@@ -2148,13 +2180,15 @@ class Game:
         self.settings[key] = (cur + (step * delta)) if isinstance(cur, float) else (cur + delta)
         clamp_settings(self.settings)
 
-
         self.settings["timed_duration"] = max(1.0, float(self.settings.get("timed_duration", 60.0)))
         self.settings["timed_gain"]     = max(0.0, float(self.settings.get("timed_gain", 0.0)))
         self.settings["timed_penalty"]  = max(0.0, float(self.settings.get("timed_penalty", 0.0)))
 
         if key == "memory_hide_sec":
             self.settings["memory_hide_sec"] = max(0.5, float(self.settings["memory_hide_sec"]))
+
+        if key == "timed_memory_hide_sec":
+            self.settings["timed_memory_hide_sec"] = max(0.5, float(self.settings["timed_memory_hide_sec"]))
 
         if key == "music_volume" and self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
@@ -2173,21 +2207,8 @@ class Game:
     def open_settings(self) -> None:
         self.settings = make_runtime_settings(CFG)
 
-        self.settings.setdefault("glitch_mode", "BOTH")
-        self.settings.setdefault("fps", int(CFG.get("display", {}).get("fps", FPS)))
-        self.settings.setdefault("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS)))
-        self.settings.setdefault("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5)))
-
-        self.settings.setdefault("memory_hide_sec",  float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC)))
-
-        self.settings.setdefault("timed_duration",   float(CFG.get("timed", {}).get("duration", TIMED_DURATION)))
-        self.settings.setdefault("timed_gain",       float(CFG.get("timed", {}).get("gain", 1.0)))
-        self.settings.setdefault("timed_penalty",    float(CFG.get("timed", {}).get("penalty", 1.0)))
-        self.settings.setdefault("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME)))
-        self.settings.setdefault("timed_enable_remap",   True)
-        self.settings.setdefault("timed_enable_spin",    True)
-        self.settings.setdefault("timed_enable_memory",  True)
-        self.settings.setdefault("timed_enable_joystick",True)
+        for k, v in _settings_defaults_from_cfg():
+            self.settings.setdefault(k, v)
 
         self.settings_idx = 0
         self.settings_move(0)   
@@ -2227,6 +2248,9 @@ class Game:
         payload["timed"]["allow_spin"]     = bool(self.settings.get("timed_enable_spin", True))
         payload["timed"]["allow_memory"]   = bool(self.settings.get("timed_enable_memory", True))
         payload["timed"]["allow_joystick"] = bool(self.settings.get("timed_enable_joystick", True))
+        payload["timed"]["remap_every_hits"] = int(self.settings.get("timed_remap_every_hits", 6))
+        payload["timed"]["spin_every_hits"]  = int(self.settings.get("timed_spin_every_hits", 5))
+        payload["timed"]["memory_hide_sec"]  = float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
         save_config(payload)
 
@@ -2328,16 +2352,18 @@ class Game:
     def reset_game_state(self) -> None:
         self.timer_timed.reset()
         self.timer_speed.reset()
+
         self.level = 1
         self.hits_in_level = 0
         self.level_goal = LEVELS[1].hits_required
         self.score = 0
         self.streak = 0
-        self.best_streak = 0 
+        self.best_streak = 0
         self.final_total = 0
         self.is_new_best = False
         self.lives = int(self.settings.get("lives", MAX_LIVES))
         self.rules.install([])
+        self.rules.current_mapping = None
         self.target = None
         self.target_time = float(self.settings.get("target_time_initial", TARGET_TIME_INITIAL))
         self.symbol_spawn_time = 0.0
@@ -2346,18 +2372,21 @@ class Game:
         self.timed_hits_since_roll = 0
         self.level_cfg.control_flip_lr_ud = False
         self.level_cfg.memory_mode = False
-        self.rules.install([]); self.rules.current_mapping = None
-        self._recompute_keymap()
-
-        if self.mode is Mode.TIMED:
-            self._timed_roll_mod()
-
-        # ring / remap reset
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
         self._recompute_keymap()
 
-        # level 1 config + instrukcja
-        self.apply_level(1)
+        if self.mode is Mode.TIMED:
+            self.scene = Scene.GAME
+            self.hits_in_level = 0
+            self.level = 1
+            self._timed_roll_mod()
+            if "memory" in self.timed_active_mods:
+                self._memory_start_preview(reset_moves=False, force_unhide=True)
+
+            self.new_target()
+            self.timer_timed.start(float(self.settings.get("timed_duration", TIMED_DURATION)))
+        else:
+            self.apply_level(1)
 
     def apply_level(self, lvl: int) -> None:
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
@@ -2404,15 +2433,15 @@ class Game:
 
     def _start_mapping_banner(self, from_pinned: bool = False) -> None:
         now = self.now()
+        grant_bonus = (self.mode is Mode.TIMED) and (not self.banner.is_active(now))
         self.banner.start(now, from_pinned=from_pinned)
         self.pause_until = max(self.pause_until, now + self.banner.total)
-        if self.mode is Mode.TIMED:
+        if grant_bonus:
             bonus = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
-            self.timer_timed.set(self.timer_timed.get() + bonus)
+            self.timer_timed.set(self.timer_timed.get() + max(0.0, bonus))
         if self.level_cfg.memory_mode:
             self.memory_preview_armed = True
             self.memory_hide_deadline = 0.0
-
         self.stop_timer()
 
     def _enter_gameplay_after_instruction(self) -> None:
@@ -2603,10 +2632,6 @@ class Game:
                 self.best_streak = self.streak
             self.score += 1
 
-            if self.mode is Mode.TIMED:
-                gain = float(self.settings.get("timed_gain", 1.0))
-                self.timer_timed.set(self.timer_timed.get() + gain)
-
             # pulse
             self.fx.trigger_pulse('score')
             try:
@@ -2621,11 +2646,23 @@ class Game:
             self.hits_in_level += 1
 
             if self.mode is Mode.TIMED:
+                gain = float(self.settings.get("timed_gain", 1.0))
+                self.timer_timed.set(self.timer_timed.get() + gain)
+
                 self.timed_hits_since_roll += 1
                 every = int(self.settings.get("timed_mod_every_hits", 6))
                 if self.timed_hits_since_roll >= max(1, every):
                     self.timed_hits_since_roll = 0
                     self._timed_roll_mod()
+
+                if "remap" in self.timed_active_mods and self.rules.on_correct():
+                    self.rules.roll_mapping(SYMS)
+                    self._start_mapping_banner(from_pinned=True)
+
+                if "spin" in self.timed_active_mods:
+                    se = int(self.settings.get("timed_spin_every_hits", 0))
+                    if se > 0 and (self.hits_in_level % se == 0):
+                        self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
             if self.mode is Mode.SPEEDUP:
                 if self.rules.on_correct():
@@ -2634,15 +2671,13 @@ class Game:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
-            
-            # rotacje w levelu
-            resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
-            every = int(self.settings.get("spin_every_hits", 0))
-            if ("spin" in resolved) and every > 0 and (self.hits_in_level % every == 0):
-                self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+                resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
+                every = int(self.settings.get("spin_every_hits", 0))
+                if ("spin" in resolved) and every > 0 and (self.hits_in_level % every == 0):
+                    self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
             # Level up? Przerywamy flow (instrukcja wystartuje nowy cel później)
-            if self.hits_in_level >= self.level_goal:
+            if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
                 self.level_up()
                 if self.scene is Scene.INSTRUCTION:
                     # nic nie ma tykać w tle
