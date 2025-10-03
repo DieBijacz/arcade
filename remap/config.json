@@ -9,8 +9,8 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      770,
-      1369
+      446,
+      793
     ]
   },
   "speedup": {
@@ -39,7 +39,7 @@
     "banner_font_center": 64,
     "banner_font_pinned": 40,
     "spin_rotations_per_level": 5,
-    "spin_every_hits": 7
+    "spin_every_hits": 3
   },
   "lives": 5,
   "audio": {
@@ -72,7 +72,7 @@
         235
       ],
       "mods": [
-        "spin",
+        "—",
         "—",
         "—",
         "—"
@@ -86,7 +86,7 @@
         235
       ],
       "mods": [
-        "—",
+        "remap",
         "—",
         "—",
         "—"
@@ -101,7 +101,7 @@
       ],
       "mods": [
         "spin",
-        "memory",
+        "—",
         "—",
         "—"
       ]
@@ -114,8 +114,8 @@
         235
       ],
       "mods": [
-        "spin",
         "remap",
+        "spin",
         "—",
         "—"
       ]
@@ -143,7 +143,7 @@
       ],
       "mods": [
         "memory",
-        "remap",
+        "spin",
         "—",
         "—"
       ]

@@ -4,6 +4,7 @@ import os
 import random
 import sys
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -338,12 +339,9 @@ HUD_VALUE_COLOR = INK               # kolor wartości HUD
 SCORE_LABEL_COLOR = ACCENT          # kolor napisu „SCORE”
 SCORE_VALUE_COLOR = INK             # kolor liczby punktów
 
-# --- Modifiers (UI table) ---
-MODIFIER_OPTIONS = ["—", "remap", "spin", "memory", "joystick", "random"]  # "—" = none
-
 def _normalize_mods_raw(mods: List[str]) -> List[str]:
-    valid = set(MODIFIER_OPTIONS)
-    fixed = {"remap", "spin", "memory", "joystick"}  # stałe, bez powtórek
+    valid = set(modifier_options())
+    fixed = set(MODS.ids()) 
     out, seen_fixed = [], set()
     for m in (mods or [])[:3]:
         m = m if m in valid else "—"
@@ -354,7 +352,7 @@ def _normalize_mods_raw(mods: List[str]) -> List[str]:
                 seen_fixed.add(m)
                 out.append(m)
         else:
-            out.append(m)  # "—" i "random" przechodzą bez ograniczeń
+            out.append(m)  
     while len(out) < 3:
         out.append("—")
     return out[:3]
@@ -482,7 +480,7 @@ def apply_levels_from_cfg(cfg: dict) -> None:
                 if "hits" in v:
                     L.hits_required = int(max(1, min(999, v["hits"])))
                 if "mods" in v and isinstance(v["mods"], list):
-                    raw = [m if m in MODIFIER_OPTIONS else "—" for m in v["mods"]]
+                    raw = [m if m in modifier_options() else "—" for m in v["mods"]]
                     L.modifiers = _normalize_mods_raw(raw)
         except Exception:
             pass
@@ -500,6 +498,133 @@ def _ensure_level_exists(lid: int) -> None:
         hits_required=LEVEL_GOAL_PER_LEVEL,
         modifiers=["—","—","—"]
     )
+
+# ========= MOD SYSTEM (pluggable) =========
+
+class BaseMod(ABC):
+    id: str = ""
+    timed_setting_key: Optional[str] = None
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        pass
+    def apply_runtime_flags(self, game: 'Game') -> None:
+        pass
+    def on_mods_applied(self, game: 'Game') -> None:
+        pass
+    def on_level_start(self, game: 'Game') -> None:
+        pass
+    def on_correct(self, game: 'Game') -> None:
+        pass
+    def on_wrong(self, game: 'Game') -> None:
+        pass
+
+class RemapMod(BaseMod):
+    id = "remap"
+    timed_setting_key = "timed_enable_remap"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        every = int(game.settings.get("remap_every_hits", RULE_EVERY_HITS))
+        L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every))
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        every = int(game.settings.get("timed_remap_every_hits", 6))
+        game.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
+        if not game.rules.current_mapping:
+            game.rules.roll_mapping(SYMS)
+            game._start_mapping_banner(from_pinned=False)
+
+    def on_correct(self, game: 'Game') -> None:
+        if game.rules.on_correct():
+            game.rules.roll_mapping(SYMS)
+            game._start_mapping_banner(from_pinned=True)
+
+class SpinMod(BaseMod):
+    id = "spin"
+    timed_setting_key = "timed_enable_spin"
+
+    def on_level_start(self, game: 'Game') -> None:
+        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+    def on_correct(self, game: 'Game') -> None:
+        if game.mode is Mode.SPEEDUP:
+            every = int(game.settings.get("spin_every_hits", 0))
+            if every > 0 and (game.hits_in_level % every == 0):
+                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+        else:  # TIMED
+            every = int(game.settings.get("timed_spin_every_hits", 0))
+            if every > 0 and (game.hits_in_level % every == 0):
+                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+class MemoryMod(BaseMod):
+    id = "memory"
+    timed_setting_key = "timed_enable_memory"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        L.memory_mode = True
+
+    def on_level_start(self, game: 'Game') -> None:
+        if game.level_cfg.memory_mode:
+            game._memory_start_preview(reset_moves=False, force_unhide=True)
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        game.level_cfg.memory_mode = True
+        game._memory_start_preview(reset_moves=False, force_unhide=True)
+
+class JoystickMod(BaseMod):
+    id = "joystick"
+    timed_setting_key = "timed_enable_joystick"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        L.control_flip_lr_ud = True
+
+    def apply_runtime_flags(self, game: 'Game') -> None:
+        game.level_cfg.control_flip_lr_ud = True
+        game._recompute_keymap()
+
+class _ModRegistry:
+    def __init__(self) -> None:
+        self._mods: dict[str, BaseMod] = {}
+
+    def register(self, mod: BaseMod) -> None:
+        self._mods[mod.id] = mod
+
+    def get(self, mod_id: str) -> Optional[BaseMod]:
+        return self._mods.get(mod_id)
+
+    def ids(self) -> list[str]:
+        return list(self._mods.keys())
+
+    def items(self) -> list[tuple[str, BaseMod]]:
+        return list(self._mods.items())
+
+MODS = _ModRegistry()
+MODS.register(RemapMod())
+MODS.register(SpinMod())
+MODS.register(MemoryMod())
+MODS.register(JoystickMod())
+
+def modifier_options() -> list[str]:
+    return ["—"] + MODS.ids() + ["random"]
+
+def mods_from_ids(ids: list[str]) -> list[BaseMod]:
+    out: list[BaseMod] = []
+    for mid in ids or []:
+        m = MODS.get(mid)
+        if m:
+            out.append(m)
+    return out
+
+def allowed_mod_ids_from_settings(settings: dict) -> list[str]:
+    out = []
+    for mid, m in MODS.items():
+        key = getattr(m, "timed_setting_key", None)
+        if not key:
+            out.append(mid)
+        elif bool(settings.get(key, True)):
+            out.append(mid)
+    return out
 
 # ========= TUTORIAL =========
 @dataclass
@@ -1664,23 +1789,31 @@ class Game:
 
     def _timed_apply_active_mods(self) -> None:
         old = list(self.timed_active_mods)
+
         self._timed_prune_disallowed()
-        mods = set(self.timed_active_mods)
-        self.level_cfg.control_flip_lr_ud = ("joystick" in mods)
+        self.timed_active_mods = list(dict.fromkeys(self.timed_active_mods))
+
+        self.level_cfg.control_flip_lr_ud = False
+        self.level_cfg.memory_mode = False
         self._recompute_keymap()
-        self.level_cfg.memory_mode = ("memory" in mods)
-        if "memory" not in mods:
-            self.memory_show_icons = True
-            self.memory_hide_deadline = 0.0
-        if "remap" in mods:
-            every = int(self.settings.get("timed_remap_every_hits", 6))
-            self.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
-            if not self.rules.current_mapping:
-                self.rules.roll_mapping(SYMS)
-                self._start_mapping_banner(from_pinned=False)
-        else:
+
+        any_remap = False
+        for mod in mods_from_ids(self.timed_active_mods):
+            if isinstance(mod, RemapMod):
+                any_remap = True
+            mod.apply_runtime_flags(self)
+
+        if not any_remap:
             self.rules.install([])
             self.rules.current_mapping = None
+
+        if "memory" not in self.timed_active_mods:
+            self.memory_show_icons = True
+            self.memory_hide_deadline = 0.0
+
+        for mod in mods_from_ids(self.timed_active_mods):
+            mod.on_mods_applied(self)
+
         if old != self.timed_active_mods:
             self._last_timed_mods = list(self.timed_active_mods)
             self._timed_mods_changed_at = self.now()
@@ -1717,12 +1850,7 @@ class Game:
             self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
     def _timed_allowed_pool(self) -> list[str]:
-        pool = []
-        if self.settings.get("timed_enable_remap", True):    pool.append("remap")
-        if self.settings.get("timed_enable_spin", True):     pool.append("spin")
-        if self.settings.get("timed_enable_memory", True):   pool.append("memory")
-        if self.settings.get("timed_enable_joystick", True): pool.append("joystick")
-        return pool
+        return allowed_mod_ids_from_settings(self.settings)
 
     def _timed_prune_disallowed(self) -> None:
         allowed = set(self._timed_allowed_pool())
@@ -2285,60 +2413,39 @@ class Game:
         self.scene = Scene.MENU
 
     def _apply_modifiers_to_fields(self, L: LevelCfg) -> None:
-        # 1) weź RAW i znormalizuj (na wszelki wypadek, np. po edycji)
         raw = _normalize_mods_raw((L.modifiers or [])[:3])
-
-        # 2) rozwiń RANDOMY tak, żeby się nie powtarzały
-        pool_all = ["remap", "spin", "memory", "joystick"]
+        pool_all = MODS.ids()
         resolved: list[str] = []
         for m in raw:
             if m == "random":
+                import random as _r
                 choices = [x for x in pool_all if x not in resolved]
-                pick = random.choice(choices or pool_all)
+                pick = _r.choice(choices or pool_all)
                 resolved.append(pick)
             else:
                 resolved.append(m)
 
-        # 3) zapamiętaj rozstrzygnięte mody obok RAW
         setattr(L, "_mods_resolved", resolved[:3])
-
-        # 4) ustal flagi levelu wg ROZSTRZYGNIĘTYCH modów
         L.rules = []
         L.memory_mode = False
         L.control_flip_lr_ud = False
-
-        for m in resolved:
-            if m == "remap":
-                L.rules.append(
-                    RuleSpec(
-                        RuleType.MAPPING,
-                        banner_on_level_start=True,
-                        periodic_every_hits=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
-                    )
-                )
-            elif m == "memory":
-                L.memory_mode = True
-            elif m == "joystick":
-                L.control_flip_lr_ud = True
-            elif m == "spin":
-                pass  # obrót odpalamy w apply_level
+        for mod in mods_from_ids(resolved):
+            mod.on_apply_level(self, L)
 
     def _set_level_mod_slot(self, lid: int, slot_idx: int, direction: int) -> None:
         L = LEVELS.get(lid)
-        if not L: 
+        if not L:
             return
 
         mods = (L.modifiers or [])[:]
         while len(mods) < 3:
             mods.append("—")
-
         mods = _normalize_mods_raw(mods)
-
         cur = mods[slot_idx]
-        opts = MODIFIER_OPTIONS[:]  # ["—","remap","spin","memory","joystick","random"]
+        opts = modifier_options()[:]  
         i = opts.index(cur) if cur in opts else 0
 
-        fixed = {"remap", "spin", "memory", "joystick"}
+        fixed = set(MODS.ids())
         for _ in range(len(opts)):
             i = (i + direction) % len(opts)
             cand = opts[i]
@@ -2350,7 +2457,7 @@ class Game:
                 mods[slot_idx] = cand
                 break
 
-        L.modifiers = _normalize_mods_raw(mods)  
+        L.modifiers = _normalize_mods_raw(mods)
         self._apply_modifiers_to_fields(L)
 
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
@@ -2397,11 +2504,8 @@ class Game:
     def apply_level(self, lvl: int) -> None:
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
         self.level_goal = int(max(1, self.level_cfg.hits_required))
-
         self.rules.install([])
-
         self._apply_modifiers_to_fields(self.level_cfg)
-
         self.memory_show_icons = True
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
@@ -2411,13 +2515,11 @@ class Game:
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
         resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
-
-        if "spin" in resolved:
-            self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-
+        for mod in mods_from_ids(resolved):
+            mod.on_level_start(self)
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
-            
+
         self._recompute_keymap()
 
     def level_up(self) -> None:
@@ -2638,19 +2740,20 @@ class Game:
                 self.best_streak = self.streak
             self.score += 1
 
-            # pulse
+            # pulse + SFX + ring pulse
             self.fx.trigger_pulse('score')
             try:
                 hit_pos = next(p for p, s in self.ring_layout.items() if s == required)
                 self.fx.trigger_pulse_ring(hit_pos)
             except StopIteration:
                 pass
-
             if self.sfx.get("point"): self.sfx["point"].play()
             if self.streak and self.streak % 10 == 0:
                 self.fx.trigger_pulse_streak()
+
             self.hits_in_level += 1
 
+            # TIMED: dodaj czas + roll modów
             if self.mode is Mode.TIMED:
                 gain = float(self.settings.get("timed_gain", 1.0))
                 self.timer_timed.set(self.timer_timed.get() + gain)
@@ -2661,39 +2764,32 @@ class Game:
                     self.timed_hits_since_roll = 0
                     self._timed_roll_mod()
 
-                if "remap" in self.timed_active_mods and self.rules.on_correct():
-                    self.rules.roll_mapping(SYMS)
-                    self._start_mapping_banner(from_pinned=True)
-
-                if "spin" in self.timed_active_mods:
-                    se = int(self.settings.get("timed_spin_every_hits", 0))
-                    if se > 0 and (self.hits_in_level % se == 0):
-                        self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-
+            # SPEEDUP: tempo celu
             if self.mode is Mode.SPEEDUP:
-                if self.rules.on_correct():
-                    self.rules.roll_mapping(SYMS)
-                    self._start_mapping_banner(from_pinned=True)
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
-                resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
-                every = int(self.settings.get("spin_every_hits", 0))
-                if ("spin" in resolved) and every > 0 and (self.hits_in_level % every == 0):
-                    self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
 
-            # Level up? Przerywamy flow (instrukcja wystartuje nowy cel później)
+            # Wywołaj hooki aktywnych modów
+            if self.mode is Mode.TIMED:
+                for mod in mods_from_ids(self.timed_active_mods):
+                    mod.on_correct(self)
+            else:
+                resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
+                for mod in mods_from_ids(resolved):
+                    mod.on_correct(self)
+
+            # Level up?
             if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
                 self.level_up()
                 if self.scene is Scene.INSTRUCTION:
-                    # nic nie ma tykać w tle
                     self.target = None
                     self.fx.clear_exit()
                     self.exit_dir_pos = None
                     self._lock_inputs()
                     return
 
-            # Spróbuj uruchomić exit-slide; jeśli nie — od razu nowy target
+            # Spróbuj exit-slide; jeśli nie — nowy target
             if not self._try_start_exit_slide(required):
                 self.new_target()
             return
@@ -2711,8 +2807,7 @@ class Game:
             self.timer_timed.set(self.timer_timed.get() - pen)
             if self.timer_timed.expired():
                 self.end_game()
-
-        else:  # SPEEDUP
+        else:
             if self.lives_enabled():
                 self.lives -= 1
                 if self.lives <= 0:
