@@ -315,14 +315,23 @@ TOPBAR_UNDERLINE_SHADOW_OFFSET = (2, 3)         # (dx, dy) przesunięcia w dół
 TOPBAR_UNDERLINE_SHADOW_EXTRA_THICK = 3         # cień jest trochę grubszy niż linia
 TOPBAR_UNDERLINE_SHADOW_RADIUS = 2              # lekkie zaokrąglenie krawędzi
 
-SCORE_CAPSULE_WIDTH_FACTOR = 0.42                   # szerokość kapsuły wyniku (proporcja szer.)
-SCORE_CAPSULE_HEIGHT_FACTOR = 0.15                  # wysokość kapsuły (proporcja wys.)
+CAPSULE_HEAD_RATIO = 0.75                           # ułamek wysokości wnętrza kapsuły na część SCORE (reszta = stopka)
+SCORE_CAPSULE_WIDTH_FACTOR = 0.50                   # szerokość kapsuły wyniku (proporcja szer.)
+SCORE_CAPSULE_HEIGHT_FACTOR = 0.20                  # wysokość kapsuły (proporcja wys.)
 SCORE_CAPSULE_BORDER_COLOR = (120, 200, 255, 220)   # obrys kapsuły
 SCORE_CAPSULE_BG = (22, 26, 34, 170)                # tło kapsuły (z alpha)
 SCORE_CAPSULE_RADIUS = 26                           # promień rogów kapsuły
 SCORE_CAPSULE_SHADOW = (0, 0, 0, 140)               # cień kapsuły
 SCORE_CAPSULE_SHADOW_OFFSET = (3, 5)                # offset cienia
 SCORE_CAPSULE_MIN_HEIGHT_BONUS = 15                 # minimalny „dodatkowy” wzrost wysokości
+CAPSULE_DIVIDER_WIDTH_RATIO = 0.80                  # 80% szerokości kapsuły
+CAPSULE_DIVIDER_THICKNESS   = 1                     # 1 px
+
+# Kolory/parametry życia
+LIVES_COLOR = (90, 220, 255)         # cyjan (życie aktywne)
+LIVES_LOST_ALPHA = 100                # wyblakły cyjan (utracone) – alfa 0..255
+LIVES_RADIUS_MIN = 2                 # min promień kropki
+LIVES_RADIUS_MAX = 6                 # max promień kropki
 
 # Typography (rozmiary bazowe; w kodzie są skalowane do okna)
 FONT_PATH = str(PKG_DIR / "assets" / "font" / "Orbitron-VariableFont_wght.ttf")
@@ -2163,7 +2172,7 @@ class Game:
     def toggle_settings(self) -> None:
         if self.scene is Scene.SETTINGS:
             self.settings_cancel()
-        elif self.scene is Scene.MENU:
+        else:
             self.open_settings()
 
     def settings_adjust(self, delta: int) -> None:
@@ -2616,11 +2625,11 @@ class Game:
             return
 
         if event.type == pygame.KEYDOWN:
-            # --- global shortcuts ---
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 pygame.quit(); sys.exit(0)
 
-            if event.key == pygame.K_o and self.scene in (Scene.MENU, Scene.SETTINGS):
+            # O = otwórz/zamknij Settings z KAŻDEJ sceny
+            if event.key == pygame.K_o:
                 self.toggle_settings()
                 return
 
@@ -2628,8 +2637,10 @@ class Game:
             if self.scene is Scene.MENU:
                 if event.key == pygame.K_RETURN:
                     self.start_game(); return
-                if event.key == pygame.K_m:
-                    self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP); return
+                if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP)
+                    self.fx.trigger_glitch(mag=0.95)
+                    return
 
             elif self.scene is Scene.OVER:
                 if event.key == pygame.K_SPACE:
@@ -2644,7 +2655,7 @@ class Game:
                             self.highscore = 0
                             CFG["highscore"] = 0
                             save_config({"highscore": 0})
-                            return  
+                            return
                     self.settings_save()
                     return
 
@@ -2666,7 +2677,7 @@ class Game:
                         self.settings_adjust(delta)
                     return
 
-                # ↓ – w LIŚCIE: ruch w dół / wejście do tabeli; w TABELI: następna kolumna, po ostatniej → następny wiersz
+                # ↓ – w LIŚCIE: ruch w dół / wejście do tabeli; w TABELI: następna kolumna, potem kolejny wiersz
                 if event.key == pygame.K_DOWN:
                     if self.settings_focus_table:
                         if self.level_table_sel_col < 4:
@@ -2679,7 +2690,7 @@ class Game:
                     else:
                         last_idx = self._last_editable_settings_idx()
                         if self.settings_idx == last_idx:
-                            if self.settings_page == 1:   
+                            if self.settings_page == 1:   # SPEED-UP
                                 self.settings_focus_table = True
                                 self.level_table_sel_row = 1
                                 self.level_table_sel_col = 1
@@ -2688,7 +2699,7 @@ class Game:
                             self.settings_move(+1)
                         return
 
-                # ↑ – w LIŚCIE: ruch w górę; w TABELI: poprzednia kolumna, przed pierwszą → poprzedni wiersz, a z (row1,col1) → powrót do listy
+                # ↑ – analogicznie do ↓ (w górę / wyjście z tabeli)
                 if event.key == pygame.K_UP:
                     if self.settings_focus_table:
                         if self.level_table_sel_col > 1:
@@ -2698,27 +2709,23 @@ class Game:
                                 self.level_table_sel_row -= 1
                                 self.level_table_sel_col = 4
                             else:
-                                # wyjście z tabeli na ostatnią edytowalną pozycję listy
                                 self.settings_focus_table = False
                                 self.settings_idx = self._last_editable_settings_idx()
                         return
                     else:
                         self.settings_move(-1)
                         return
-            
+
             elif self.scene is Scene.INSTRUCTION:
-                # ENTER lub SPACE = skip → natychmiast start gry
+                # ENTER/SPACE lub dowolny klawisz kierunkowy = start gry
                 if event.key in (pygame.K_RETURN, pygame.K_SPACE) or event.key in self.key_to_pos:
                     self._enter_gameplay_after_instruction()
                     return
 
-            # mark key as down for debouncing
+            # --- debouncing + kolejka wejść dla gameplay ---
             self.keys_down.add(event.key)
-
-            # translate to a game symbol if present in keymap
             name = self.keymap_current.get(event.key)
             if name:
-                # basic key lock to prevent accidental multi-presses
                 if self.lock_until_all_released or self.now() < getattr(self, "accept_after", 0.0):
                     return
                 iq.push(name)
@@ -2967,6 +2974,39 @@ class Game:
         self.screen.blit(chip, (x, y))
         return pygame.Rect(x, y, w, h)
 
+    def _draw_lives_footer(self, footer: pygame.Rect) -> None:
+        if not self.lives_enabled():
+            return
+
+        total_lives = int(self.settings.get("lives", MAX_LIVES))
+        total_lives = max(0, total_lives)
+        if total_lives <= 0:
+            return
+
+        alive = max(0, min(int(self.lives), total_lives))
+        lost = max(0, total_lives - alive)
+
+        radius = max(LIVES_RADIUS_MIN, min(LIVES_RADIUS_MAX, footer.height // 4))
+        gap = max(6, radius * 2)
+        dot_w = radius * 2
+        total_w = total_lives * dot_w + (total_lives - 1) * gap
+
+        x = footer.centerx - total_w // 2
+        cy = footer.centery
+
+        def _blit_circle(col_rgba, cx):
+            d = dot_w
+            s = pygame.Surface((d, d), pygame.SRCALPHA)
+            pygame.draw.circle(s, col_rgba, (radius, radius), radius)
+            self.screen.blit(s, (cx, cy - radius))
+
+        for i in range(total_lives):
+            cx = x + i * (dot_w + gap)
+            if i < alive:
+                _blit_circle((*LIVES_COLOR, 230), cx)  
+            else:
+                _blit_circle((*LIVES_COLOR, max(0, min(255, LIVES_LOST_ALPHA))), cx)  
+
     def _draw_mod_chip(self, tag: str, x: int, y: int, *, scale: float = 1.0) -> pygame.Rect:
         label = ("INVERTED" if tag == "joystick" else tag).upper()
         col_key = "invert" if tag == "joystick" else tag
@@ -2986,22 +3026,12 @@ class Game:
         )
         return rect
 
-    def _draw_timed_mod_chips(self) -> None:
+    def _draw_timed_mod_chips(self, footer: pygame.Rect) -> None:
         if self.mode is not Mode.TIMED or self.scene is not Scene.GAME:
             return
         mods = list(self.timed_active_mods)
         if not mods:
             return
-
-        # — rysujemy wewnątrz kapsuły SCORE, przy dolnej krawędzi —
-        cap = self.score_capsule_rect
-        pad_x = self.px(10)
-        pad_y = self.px(8)
-        inner = cap.inflate(-pad_x * 2, -pad_y * 2)
-
-        # wysokość „stopki” – trochę większa niż linia fontu
-        footer_h = int(self.font.get_height() * 1.25)
-        footer = pygame.Rect(inner.left, inner.bottom - footer_h, inner.width, footer_h)
 
         # animacja po zmianie zestawu modów
         scale = 1.0
@@ -3030,14 +3060,14 @@ class Game:
         sizes = sizes_for(scale)
         total_w = sum(w for w, _ in sizes) + gap * (len(sizes) - 1)
 
-        # spróbuj zmieścić w jednej linii przez zmniejszenie skali
+        # dopasowanie do szerokości stopki
         if total_w > footer.width:
             k = footer.width / max(1, total_w)
             scale = max(0.72, min(scale, k))
             sizes = sizes_for(scale)
             total_w = sum(w for w, _ in sizes) + gap * (len(sizes) - 1)
 
-        # jeśli wciąż za szeroko – użyj dwóch wierszy
+        # ewentualnie dwa wiersze
         two_rows = total_w > footer.width
 
         def draw_row(row_items: list[tuple[str, int, int]], y: int) -> None:
@@ -3047,11 +3077,12 @@ class Game:
                 self._draw_mod_chip(tag, x, y, scale=scale)
                 x += w + gap
 
-        labels = [m for m in mods]  # „joystick” pozostaje tagiem – _draw_mod_chip zrobi INVERTED
+        labels = [m for m in mods]
 
         if not two_rows:
             row = list(zip(labels, [w for w, _ in sizes], [h for _, h in sizes]))
-            y = footer.centery - (max((h for _, _, h in row), default=0) // 2)
+            hmax = max((h for _, _, h in row), default=0)
+            y = footer.centery - hmax // 2
             draw_row(row, y)
         else:
             mid = (len(labels) + 1) // 2
@@ -3495,12 +3526,12 @@ class Game:
         pygame.draw.line(self.screen, col, (x1, y), (x2, y), th)
 
     def _draw_hud(self) -> None:
-        # --- pełne tło topbara: od lewej do prawej krawędzi ---
+        # --- pełne tło topbara ---
         top_bg = pygame.Surface((self.topbar_rect.width, self.topbar_rect.height), pygame.SRCALPHA)
-        top_bg.fill(SCORE_CAPSULE_BG)  # (22, 26, 34, 170) — jak kapsuła SCORE
+        top_bg.fill(SCORE_CAPSULE_BG)
         self.screen.blit(top_bg, self.topbar_rect.topleft)
 
-        # --- underline --- #
+        # --- underline (po bokach kapsuły) ---
         cap = self.score_capsule_rect
         y   = self.topbar_rect.bottom - TOPBAR_UNDERLINE_THICKNESS // 2
         th  = TOPBAR_UNDERLINE_THICKNESS
@@ -3508,53 +3539,41 @@ class Game:
 
         left_end    = max(self.topbar_rect.left, cap.left - 1)
         right_start = min(self.topbar_rect.right, cap.right + 1)
-
         if left_end > self.topbar_rect.left:
             self._draw_underline_segment_with_shadow(self.topbar_rect.left, left_end, y, th, col)
-
         if right_start < self.topbar_rect.right:
             self._draw_underline_segment_with_shadow(right_start, self.topbar_rect.right, y, th, col)
 
-        # --- STREAK / HIGHSCORE
+        # --- STREAK po lewej ---
         pad_x = int(self.w * TOPBAR_PAD_X_FACTOR)
-        cap = self.score_capsule_rect
-
-        # lewa zatoka: od lewego marginesu do lewej krawędzi kapsuły
         left_block = pygame.Rect(
-            pad_x,
-            self.topbar_rect.top,
+            pad_x, self.topbar_rect.top,
             max(1, cap.left - pad_x * 2),
             self.topbar_rect.height,
         )
-
-        # prawa zatoka: od prawej krawędzi kapsuły do prawego marginesu
-        right_block = pygame.Rect(
-            cap.right + pad_x,
-            self.topbar_rect.top,
-            max(1, self.w - pad_x - (cap.right + pad_x)),
-            self.topbar_rect.height,
-        )
-
-        # === STREAK z pulsem na wartości ===
         lab = self.draw_text("STREAK", color=HUD_LABEL_COLOR, font=self.hud_label_font, shadow=True)
         label_x = left_block.centerx - lab.get_width() // 2
         label_y = left_block.centery - lab.get_height() - 2
         self.screen.blit(lab, (label_x, label_y))
-
         scale = self.fx.pulse_scale('streak')
         val = self.draw_text(str(self.streak), color=HUD_VALUE_COLOR, font=self.hud_value_font, shadow=True, scale=scale)
         vx = left_block.centerx - val.get_width() // 2
         vy = label_y + lab.get_height() + 2
         self.screen.blit(val, (vx, vy))
 
-        # HIGHSCORE po prawej (bez zmian)
+        # --- HIGHSCORE po prawej ---
+        right_block = pygame.Rect(
+            cap.right + pad_x, self.topbar_rect.top,
+            max(1, self.w - pad_x - (cap.right + pad_x)),
+            self.topbar_rect.height,
+        )
         hs_label_color = (255, 230, 140) if self.score > self.highscore else HUD_LABEL_COLOR
         self._draw_label_value_vstack_center(
             label="HIGHSCORE",
             value=str(self.highscore),
             anchor_rect=right_block,
-            label_color=hs_label_color,          
-            value_color=HUD_VALUE_COLOR,         
+            label_color=hs_label_color,
+            value_color=HUD_VALUE_COLOR,
         )
 
         # --- kapsuła SCORE ---
@@ -3565,39 +3584,76 @@ class Game:
             self.screen, cap, SCORE_CAPSULE_BG,
             border=SCORE_CAPSULE_BORDER_COLOR, border_w=2, radius=SCORE_CAPSULE_RADIUS
         )
-        label_surf = self.draw_text("SCORE", color=SCORE_LABEL_COLOR, font=self.score_label_font, shadow=True)
-        raw_val = self.draw_text(
-            str(self.score),
-            color=SCORE_VALUE_COLOR,
-            font=self.score_value_font,
-            shadow=True,
-            scale=self.fx.pulse_scale('score'),
-        )
+
+        # --- wnętrze kapsuły ---
+        pad_in_x = self.px(12)
+        pad_in_y = self.px(10)
+        inner = cap.inflate(-pad_in_x * 2, -pad_in_y * 2)
+
+        # ===== HEAD (górne 3/4) — stały box =====
+        head_h = int(inner.height * CAPSULE_HEAD_RATIO)
+        head_rect = pygame.Rect(inner.left, inner.top, inner.width, max(1, head_h))
 
         gap = 2
-        total_h = label_surf.get_height() + gap + raw_val.get_height()
+        label_h_fix = self.score_label_font.get_height()
+        value_h_fix = self.score_value_font.get_height()
+        block_h_fix = label_h_fix + gap + value_h_fix
 
-        lx = cap.centerx - label_surf.get_width() // 2
-        ly = cap.centery - total_h // 2
+        # wycentruj blok [label + value] w head_rect pionowo
+        block_top = head_rect.top + max(0, (head_rect.height - block_h_fix) // 2)
 
-        vx = cap.centerx - raw_val.get_width() // 2
-        vy = ly + label_surf.get_height() + gap
+        # 1) label "SCORE" (bez skali)
+        label_surf = self.score_label_font.render("SCORE", True, SCORE_LABEL_COLOR)
+        self.screen.blit(label_surf, (head_rect.centerx - label_surf.get_width() // 2, block_top))
 
-        self.screen.blit(label_surf, (lx, ly))
-        self.screen.blit(raw_val, (vx, vy))
+        # 2) value (puls tylko na bitmapie; pozycja w stałym prostokącie)
+        value_rect = pygame.Rect(head_rect.left, block_top + label_h_fix + gap, head_rect.width, value_h_fix)
+        score_val_surf = self.score_value_font.render(str(self.score), True, SCORE_VALUE_COLOR)
+        pulse_scale = self.fx.pulse_scale('score')
+        if abs(pulse_scale - 1.0) > 1e-3:
+            sw, sh = score_val_surf.get_size()
+            score_val_surf = pygame.transform.smoothscale(
+                score_val_surf,
+                (max(1, int(sw * pulse_scale)), max(1, int(sh * pulse_scale)))
+            )
+        self.screen.blit(
+            score_val_surf,
+            (value_rect.centerx - score_val_surf.get_width() // 2,
+            value_rect.centery - score_val_surf.get_height() // 2)
+        )
 
-        # docelowe Y dla dockowania bannera: poniżej kapsuły SCORE
+        # ===== FOOTER (dolna 1/4) — separator + życia/mechaniki =====
+        footer_top = head_rect.bottom
+        footer_h   = max(1, inner.bottom - footer_top)
+        footer     = pygame.Rect(inner.left, footer_top, inner.width, footer_h)
+
+        # separator: 80% szerokości, cienki, nie dotyka obramowania
+        sep_w = int(inner.width * CAPSULE_DIVIDER_WIDTH_RATIO)
+        sep_x1 = inner.centerx - sep_w // 2
+        sep_x2 = sep_x1 + sep_w
+        sep_y  = footer.top + self.px(6)
+        pygame.draw.line(self.screen, (120, 200, 255), (sep_x1, sep_y), (sep_x2, sep_y), max(1, CAPSULE_DIVIDER_THICKNESS))
+
+        # faktyczna stopka robocza pod linią
+        content_top = sep_y + CAPSULE_DIVIDER_THICKNESS + self.px(6)
+        footer = pygame.Rect(inner.left, content_top, inner.width, max(0, inner.bottom - content_top))
+
+        if self.mode is Mode.TIMED:
+            # UWAGA: wersja _draw_timed_mod_chips powinna przyjmować footer (zgodnie z wcześniejszą zmianą)
+            self._draw_timed_mod_chips(footer)
+        else:
+            self._draw_lives_footer(footer)
+
+        # docelowe Y dla przyczepionego bannera reguły (poniżej kapsuły)
         margin = self.px(RULE_BANNER_PINNED_MARGIN)
         self._rule_pinned_y = max(self.topbar_rect.bottom + self.px(8), self.score_capsule_rect.bottom + margin)
 
-        # Bottom timer (only in-game)
+        # --- Timer na dole ekranu ---
         if self.scene is Scene.GAME:
             if self.mode is Mode.TIMED:
                 tdur = float(self.settings.get("timed_duration", TIMED_DURATION))
                 left = self.timer_timed.get()
                 self.timebar.draw(left / max(0.001, tdur), f"{left:.1f}s")
-                self._draw_timed_mod_chips()
-
             if self.mode is Mode.SPEEDUP and self.target_time > 0:
                 remaining = self.timer_speed.get()
                 ratio = remaining / max(0.001, self.target_time)
@@ -3826,7 +3882,7 @@ class Game:
 
                 # --- Badge trybu pod logo ---
                 mode_label = "SPEED-UP" if self.mode is Mode.SPEEDUP else "TIMED"
-                mode_text = f"Mode: {mode_label}   (M to change)"
+                mode_text = f"Mode: {mode_label}"
                 t_surf = self.mid.render(mode_text, True, MENU_MODE_TEXT_COLOR)
                 pad_x = self.px(12); pad_y = self.px(8)
                 bw = t_surf.get_width() + pad_x * 2
