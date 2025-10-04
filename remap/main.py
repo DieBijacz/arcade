@@ -51,12 +51,13 @@ class ImageStore:
     def load(self, path: str, *, allow_alpha: bool = True) -> Optional[pygame.Surface]:
         if not path:
             return None
-        if path in self.cache:
-            return self.cache[path]
+        norm = os.path.normpath(path)
+        if norm in self.cache:
+            return self.cache[norm]
         try:
-            img = pygame.image.load(path)
+            img = pygame.image.load(norm)
             img = img.convert_alpha() if allow_alpha else img.convert()
-            self.cache[path] = img
+            self.cache[norm] = img
             return img
         except Exception:
             return None
@@ -227,6 +228,12 @@ RULE_SYMBOL_SCALE_PINNED = 0.70   # skala symboli po dokowaniu
 RULE_BANNER_MIN_W_FACTOR = 0.90   # minimalna szerokość panelu względem ekranu
 RULE_BANNER_FONT_CENTER_PX = 64
 RULE_BANNER_FONT_PINNED_PX = 40
+
+# --- Mods banner (centralny, informujący o wylosowanych modach) ---
+MODS_BANNER_IN_SEC   = 0.40
+MODS_BANNER_HOLD_SEC = 1.60
+MODS_BANNER_OUT_SEC  = 0.35
+MODS_BANNER_TITLE    = "NEW MODS:"
 
 # --- Input Ring (wokół symbolu celu)
 RING_RADIUS_FACTOR = 1           # promień ringu jako ułamek rozmiaru docelowego symbolu
@@ -701,67 +708,52 @@ class TutorialPlayer:
 
     def draw(self):
         g = self.g
-        g._blit_bg()
+        now = g.now()
+        self.update() 
 
+        # tło + ring
+        g._blit_bg()
         base_size = int(g.w * SYMBOL_BASE_SIZE_FACTOR)
         cx, cy = int(g.w * 0.5), int(g.h * CENTER_Y_FACTOR)
+        g.ring.draw((cx, cy), base_size, layout=self.ring_layout, spin_deg=0.0)
 
-        # OBRÓT RINGU PODCZAS INSTRUKCJI
-        spin_deg = g._update_ring_rotation_anim()
+        try:
+            self._draw_mapping_banner()
+        except Exception:
+            pass
 
-        # ring z aktualnym układem tutorialowym + obrotem
-        g.ring.draw((cx, cy), base_size, layout=self.ring_layout, spin_deg=spin_deg)
-
-        # baner
-        self._draw_mapping_banner() 
-
-        # aktywne instancje
+        # aktywne "klatki" demo — symbol leci z centrum do celu
         for inst in self._active:
             it: DemoItem = inst['item']
             started: float = inst['started']
-            slide_start = inst['slide_start']
-
+            slide_start = inst.get('slide_start', None)
+            start_x, start_y = cx, cy
             target_pos = self._target_for(it.symbol, it.use_mapping)
+            r = int(base_size * RING_RADIUS_FACTOR)
+            pos_xy = {
+                "TOP": (cx, cy - r),
+                "RIGHT": (cx + r, cy),
+                "LEFT": (cx - r, cy),
+                "BOTTOM": (cx, cy + r),
+            }
+            end_x, end_y = pos_xy.get(target_pos, (cx, cy))
 
-            if slide_start is None:
-                rect = pygame.Rect(0, 0, base_size, base_size); rect.center = (cx, cy)
-                g.draw_symbol(g.screen, it.symbol, rect)
+            if slide_start is None or it.slide_duration <= 0.0:
+                p = 0.0
             else:
-                prog = (g.now() - slide_start) / max(1e-6, it.slide_duration)
-                prog = 0.0 if prog < 0 else 1.0 if prog > 1 else prog
-                eased = g._ease_out_cubic(prog)
+                t = max(0.0, min(1.0, (now - slide_start) / max(1e-6, it.slide_duration)))
+                p = g._ease_out_cubic(t)
 
-                r = int(base_size * RING_RADIUS_FACTOR)
-                pos_xy = {"TOP": (cx, cy - r), "RIGHT": (cx + r, cy), "LEFT": (cx - r, cy), "BOTTOM": (cx, cy + r)}
-                tx, ty = pos_xy[target_pos]
-                ex = int(cx + (tx - cx) * 1.2 * eased)
-                ey = int(cy + (ty - cy) * 1.2 * eased)
+            x = int(start_x + (end_x - start_x) * p)
+            y = int(start_y + (end_y - start_y) * p)
+            scale = 1.0 - 0.12 * p
 
-                scale = (1.0 - 0.25 * eased)
-                size = max(1, int(g.w * SYMBOL_BASE_SIZE_FACTOR * scale))
-                srf = pygame.Surface((size, size), pygame.SRCALPHA)
-                g.draw_symbol(srf, it.symbol, srf.get_rect())
+            size = max(1, int(g.w * SYMBOL_BASE_SIZE_FACTOR * scale))
+            rect = pygame.Rect(0, 0, size, size)
+            rect.center = (x, y)
+            g.draw_symbol(g.screen, it.symbol, rect)
 
-                # fade jak w gameplay exit-slide: gaśnie w trakcie slajdu
-                if prog < 1.0:
-                    alpha = max(0, int(255 * (1.0 - eased)))
-                else:
-                    alpha = 0
-                srf.set_alpha(alpha)
-
-                if alpha > 0:
-                    g.screen.blit(srf, (ex - size//2, ey - size//2))
-
-            if self.caption and self.show_caption:
-                r = int(base_size * RING_RADIUS_FACTOR)
-                margin = g.px(14)
-                y = cy - r - g.mid.get_height() - margin
-                if getattr(self, "static_banner", False):
-                    y -= g.px(12)
-                tw, th = g.mid.size(self.caption)
-                g.draw_text(self.caption, pos=(g.w/2 - tw/2, y), font=g.mid, color=ACCENT)
-
-def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
+def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
     L = g.level_cfg
     resolved = getattr(L, "_mods_resolved", L.modifiers or [])
 
@@ -815,6 +807,59 @@ def build_tutorial_for_level(g: 'Game') -> Optional['TutorialPlayer']:
         mapping_pair=mapping_pair,
         show_mapping_banner=bool(mapping_pair),
         static_banner=True,    
+        sequential=True,
+        seq_gap=0.12,
+    )
+
+def build_tutorial_for_timed(g: 'Game') -> Optional['TutorialPlayer']:
+    settings = g.settings
+    allow_remap   = bool(settings.get("timed_enable_remap",   True))
+    allow_spin    = bool(settings.get("timed_enable_spin",    True))
+    allow_memory  = bool(settings.get("timed_enable_memory",  True))
+    allow_invert  = bool(settings.get("timed_enable_joystick", True))
+
+    parts = []
+    if allow_remap:  parts.append("Remap")
+    if allow_spin:   parts.append("Rotate")
+    if allow_memory: parts.append("Memory")
+    if allow_invert: parts.append("Controls flipped")
+    caption = " + ".join(parts) if parts else "Classic"
+
+    def SYM(exclude: set[str] = set()) -> str:
+        choices = [s for s in SYMS if s not in exclude]
+        return random.choice(choices) if choices else random.choice(SYMS)
+
+    items: list[DemoItem] = []
+    mapping_pair: Optional[tuple[str, str]] = None
+
+    if allow_remap:
+        a = SYM()
+        b = SYM({a})
+        mapping_pair = (a, b)
+        neutral = SYM({a, b})
+        items += [
+            DemoItem(at=0.0, symbol=a,       slide_delay=0.9, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
+            DemoItem(at=0.0, symbol=neutral, slide_delay=0.9, slide_duration=0.60, use_mapping=False, rotate_ring=False),
+            DemoItem(at=0.0, symbol=a,       slide_delay=0.9, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
+        ]
+    else:
+        x = SYM(); y = SYM({x}); z = SYM({x, y})
+        items += [
+            DemoItem(at=0.0, symbol=x, slide_delay=0.9, slide_duration=0.60),
+            DemoItem(at=0.0, symbol=y, slide_delay=0.9, slide_duration=0.60),
+            DemoItem(at=0.0, symbol=z, slide_delay=0.9, slide_duration=0.60),
+        ]
+
+    if allow_spin and len(items) >= 2:
+        items[0].rotate_ring = True
+        items[1].rotate_ring = True
+
+    return TutorialPlayer(
+        g, items,
+        caption=caption,
+        mapping_pair=mapping_pair,
+        show_mapping_banner=bool(mapping_pair),
+        static_banner=True,
         sequential=True,
         seq_gap=0.12,
     )
@@ -1437,6 +1482,9 @@ class Game:
         # --- rule / banner manager ---
         self.rules = RuleManager()
         self.banner = BannerManager(RULE_BANNER_IN_SEC, RULE_BANNER_HOLD_SEC, RULE_BANNER_TO_TOP_SEC)
+        self.mods_banner = BannerManager(MODS_BANNER_IN_SEC, MODS_BANNER_HOLD_SEC, MODS_BANNER_OUT_SEC)
+        self._pending_timed_mods: Optional[list[str]] = None
+        self._mods_banner_was_active: bool = False
 
         # ring
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
@@ -1631,6 +1679,10 @@ class Game:
             return float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
         return float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
+    def _mods_chain_active(self) -> bool:
+        now = self.now()
+        return self.mods_banner.is_active(now) or self.banner.is_active(now)
+
     def _timed_slots(self) -> int:
         diff = str(self.settings.get("timed_difficulty", "EASY"))
         return 1 if diff == "EASY" else (2 if diff == "MEDIUM" else 3)
@@ -1667,35 +1719,33 @@ class Game:
             self._timed_mods_changed_at = self.now()
 
     def _timed_roll_mod(self) -> None:
-        import random as _r
-        allowed = self._timed_allowed_pool()
-        if not allowed:
-            self.timed_active_mods = []
-            self._timed_apply_active_mods()
+        if self._mods_chain_active() or (self._pending_timed_mods is not None):
             return
 
-        slots = min(self._timed_slots(), len(allowed))
-
-        self._timed_prune_disallowed()
-        self.timed_active_mods = list(dict.fromkeys(self.timed_active_mods)) 
-
-        if len(self.timed_active_mods) < slots:
-            choices = [m for m in allowed if m not in self.timed_active_mods]
-            _r.shuffle(choices)
-            need = slots - len(self.timed_active_mods)
-            self.timed_active_mods += choices[:need]
+        allowed = self._timed_allowed_pool()
+        if not allowed:
+            new_set = []
         else:
-            old = self.timed_active_mods.pop(0)
-            choices = [m for m in allowed if m not in self.timed_active_mods and m != old]
-            pick = _r.choice(choices) if choices else old
-            if pick not in self.timed_active_mods:
-                self.timed_active_mods.append(pick)
+            slots = min(self._timed_slots(), len(allowed))
 
-        self.timed_active_mods = self.timed_active_mods[:slots]
+            self._timed_prune_disallowed()
+            active = list(dict.fromkeys(self.timed_active_mods))
 
-        self._timed_apply_active_mods()
-        if "spin" in self.timed_active_mods:
-            self.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+            if len(active) < slots:
+                choices = [m for m in allowed if m not in active]
+                random.shuffle(choices)
+                need = slots - len(active)
+                active += choices[:need]
+            else:
+                old = active.pop(0) if active else None
+                choices = [m for m in allowed if m not in active and m != old]
+                pick = random.choice(choices) if choices else old
+                if pick and pick not in active:
+                    active.append(pick)
+
+            new_set = active[:slots]
+
+        self._timed_queue_mod_change(new_set)
 
     def _timed_allowed_pool(self) -> list[str]:
         return allowed_mod_ids_from_settings(self.settings)
@@ -1726,6 +1776,26 @@ class Game:
             if not choices:
                 break
             self.timed_active_mods.append(_r.choice(choices))
+
+    def _timed_queue_mod_change(self, new_mods: list[str]) -> None:
+        self._pending_timed_mods = list(new_mods or [])
+        now = self.now()
+        if not self.mods_banner.is_active(now):
+            self.mods_banner.start(now, from_pinned=False)
+            self.pause_until = max(self.pause_until, now + self.mods_banner.total)
+            self.stop_timer()
+            self.fx.trigger_glitch(mag=0.55)
+
+    def _commit_queued_timed_mods(self) -> None:
+        if not self._pending_timed_mods and self._pending_timed_mods != []:
+            return
+
+        self.timed_active_mods = list(self._pending_timed_mods or [])
+        self._pending_timed_mods = None
+        self._timed_apply_active_mods()  
+
+        if "remap" in self.timed_active_mods and self.rules.current_mapping:
+            self._start_mapping_banner(from_pinned=False)
 
     def _ease_linear(self, t: float) -> float:
         return self.fx._ease_linear(t)
@@ -2485,29 +2555,31 @@ class Game:
         self.final_total = 0
         self.is_new_best = False
         self.lives = int(self.settings.get("lives", MAX_LIVES))
+
         self.rules.install([])
         self.rules.current_mapping = None
         self.target = None
         self.target_time = float(self.settings.get("target_time_initial", TARGET_TIME_INITIAL))
         self.symbol_spawn_time = 0.0
         self.pause_until = 0.0
+
+        # TIMED – stan modów
         self.timed_active_mods = []
         self.timed_hits_since_roll = 0
+
+        # sterowanie / ring
         self.level_cfg.control_flip_lr_ud = False
         self.level_cfg.memory_mode = False
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
         self._recompute_keymap()
 
         if self.mode is Mode.TIMED:
-            self.scene = Scene.GAME
-            self.hits_in_level = 0
-            self.level = 1
-            self._timed_roll_mod()
-            if "memory" in self.timed_active_mods:
-                self._memory_start_preview(reset_moves=False, force_unhide=True)
-
-            self.new_target()
-            self.timer_timed.start(float(self.settings.get("timed_duration", TIMED_DURATION)))
+            self.scene = Scene.INSTRUCTION
+            self.instruction_text = "TIMED"
+            self.instruction_until = float('inf')
+            self.tutorial = build_tutorial_for_timed(self)
+            self.instruction_intro_t = self.now()
+            self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
         else:
             self.apply_level(1)
 
@@ -2520,7 +2592,7 @@ class Game:
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
-        self.tutorial = build_tutorial_for_level(self)
+        self.tutorial = build_tutorial_for_speed(self)
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
@@ -2764,7 +2836,7 @@ class Game:
 
                 self.timed_hits_since_roll += 1
                 every = int(self.settings.get("timed_mod_every_hits", 6))
-                if self.timed_hits_since_roll >= max(1, every):
+                if self.timed_hits_since_roll >= max(1, every) and not self._mods_chain_active():
                     self.timed_hits_since_roll = 0
                     self._timed_roll_mod()
 
@@ -2835,8 +2907,13 @@ class Game:
                 self._memory_start_preview(reset_moves=False, force_unhide=False)
         self._banner_was_active = banner_active
 
+        mods_active = self.mods_banner.is_active(now)
+        if getattr(self, "_mods_banner_was_active", False) and not mods_active:
+            self._commit_queued_timed_mods()
+        self._mods_banner_was_active = mods_active
+
         # === WSPÓLNA PAUZA ===
-        paused = banner_active or (now < self.pause_until)
+        paused = self.mods_banner.is_active(now) or banner_active or (now < self.pause_until)
         if paused:
             _ = iq.pop_all()
             self.stop_timer()
@@ -2846,6 +2923,7 @@ class Game:
 
         if (self.scene is Scene.GAME 
             and self.target is None 
+            and not self.mods_banner.is_active(now)
             and not self.banner.is_active(now) 
             and not self.rot_anim.get("active", False) 
             and now >= self.pause_until):
@@ -3517,6 +3595,57 @@ class Game:
         self.screen.blit(shadow, (panel_x + 3, panel_y + 5))
         self.screen.blit(panel, (panel_x, panel_y))
 
+    def _draw_mods_banner_anim(self) -> None:
+        now = self.now()
+        phase, p = self.mods_banner.phase(now)
+
+        mid_y = int(self.h * 0.30)
+        if phase == "in":
+            k = self._ease_out_cubic(p)
+            y = int(-self.h * 0.35 + (mid_y + self.h * 0.35) * k)
+            scale = 0.92 + 0.08 * k
+        elif phase == "hold":
+            y = mid_y
+            scale = 1.0
+        else:  # out
+            k = self._ease_out_cubic(p)
+            pinned_y = int(getattr(self, "_rule_pinned_y", self.topbar_rect.bottom + self.px(12)))
+            y = int(mid_y + (pinned_y - mid_y) * k)
+            scale = 1.0 - 0.08 * k
+
+        title_surf = self.rule_font_center.render(MODS_BANNER_TITLE, True, ACCENT)
+        tw, th = title_surf.get_size()
+
+        mods = list(self._pending_timed_mods if (self._pending_timed_mods is not None) else self.timed_active_mods)
+        label = ", ".join(("INVERTED" if m=="joystick" else m).upper() for m in mods) or "NONE"
+
+        info = f"for next {int(self.settings.get('timed_mod_every_hits',6))} hits"
+        info_surf = self.mid.render(info, True, (200,210,225))
+        lw, lh = self.font.size(label)
+        label_surf = self.mid.render(label, True, INK)
+
+        pad = self.px(18)
+        inner_w = max(tw, label_surf.get_width(), info_surf.get_width())
+        inner_h = th + self.px(10) + label_surf.get_height() + self.px(8) + info_surf.get_height()
+        pw = int(max(inner_w + pad*2, self.w * 0.9) * scale)
+        ph = int((inner_h + pad*2) * scale)
+
+        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        shadow = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0,0,0,120), shadow.get_rect(), border_radius=RULE_PANEL_RADIUS+2)
+        pygame.draw.rect(panel, RULE_PANEL_BG, panel.get_rect(), border_radius=RULE_PANEL_RADIUS)
+        pygame.draw.rect(panel, RULE_PANEL_BORDER, panel.get_rect(), width=RULE_PANEL_BORDER_W, border_radius=RULE_PANEL_RADIUS)
+
+        cx = pw//2
+        y0 = pad
+        panel.blit(title_surf, (cx - tw//2, y0)); y0 += th + self.px(10)
+        panel.blit(label_surf, (cx - label_surf.get_width()//2, y0)); y0 += label_surf.get_height() + self.px(8)
+        panel.blit(info_surf, (cx - info_surf.get_width()//2, y0))
+
+        px = (self.w - pw)//2
+        self.screen.blit(shadow, (px + 3, y + 5))
+        self.screen.blit(panel, (px, y))
+
     def _draw_underline_segment_with_shadow(self, x1: int, x2: int, y: int, th: int, col) -> None:
         if x2 < x1:
             x1, x2 = x2, x1
@@ -3683,7 +3812,6 @@ class Game:
 
         sel = str(self.settings.get("ring_palette", "auto"))
 
-        # po pobiciu rekordu — złoto niezależnie od wyboru (feedback)
         if self.score > max(0, self.highscore):
             g = _pal("gold")
             return g["base"], g["hi"], g["soft"]
@@ -3692,8 +3820,7 @@ class Game:
             p = _pal(sel)
             return p["base"], p["hi"], p["soft"]
 
-        # AUTO: progres od 0..highscore
-        hs = max(1, int(self.highscore))      # unikamy dzielenia przez zero
+        hs = max(1, int(self.highscore))      
         prog = max(0.0, min(1.0, self.score / hs))
 
         names = RING_GRADIENT_ORDER
@@ -3797,7 +3924,6 @@ class Game:
         self._blit_bg()
         self._draw_hud()
 
-        # bazowy prostokąt pod symbol w centrum (zawsze liczony)
         base_size = int(self.w * SYMBOL_BASE_SIZE_FACTOR)
         base_rect = pygame.Rect(0, 0, base_size, base_size)
         base_rect.center = (int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR))
