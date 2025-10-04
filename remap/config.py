@@ -7,7 +7,6 @@ from pathlib import Path
 PKG_DIR = Path(__file__).resolve().parent
 
 def _abs(path: str) -> str:
-    # zostaw bez zmian, jeśli ktoś podał ścieżkę absolutną
     p = Path(path)
     return str(p) if p.is_absolute() else str((PKG_DIR / p).resolve())
 
@@ -22,7 +21,7 @@ DEFAULT_CFG: Dict[str, Any] = {
     "rules": {"every_hits": 10, "banner_sec": 2.0, "banner_font_center": 64, "banner_font_pinned": 40},
     "lives": 3,
     "audio": {"music": "assets/music.ogg", "music_volume": 0.5, "sfx_volume": 0.8},
-    "effects": {"glitch_enabled": True},
+    "effects": { "glitch_mode": "BOTH" },
     "ui": {"ring_palette": "auto"},
     "images": {
         "background": "assets/images/bg.png",

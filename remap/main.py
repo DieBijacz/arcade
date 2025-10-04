@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Tuple
 import pygame
 from .config import CFG, save_config, persist_windowed_size
 from .settings import make_runtime_settings, clamp_settings, commit_settings
+from .fx import EffectsManager
+from .enums import GlitchMode
 
 PKG_DIR = Path(__file__).resolve().parent
 
@@ -404,12 +406,6 @@ class Scene(Enum):
     SETTINGS = auto()
     INSTRUCTION = auto()
 
-class GlitchMode(str, Enum):
-    NONE   = "NONE"
-    TEXT   = "TEXT"
-    SCREEN = "SCREEN"
-    BOTH   = "BOTH"
-
 class RuleType(Enum):
     MAPPING = auto()   # „A ⇒ B” (baner NEW RULE)
 
@@ -507,133 +503,6 @@ def _ensure_level_exists(lid: int) -> None:
         hits_required=LEVEL_GOAL_PER_LEVEL,
         modifiers=["—","—","—"]
     )
-
-# ========= MOD SYSTEM (pluggable) =========
-
-class BaseMod(ABC):
-    id: str = ""
-    timed_setting_key: Optional[str] = None
-    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
-        pass
-    def apply_runtime_flags(self, game: 'Game') -> None:
-        pass
-    def on_mods_applied(self, game: 'Game') -> None:
-        pass
-    def on_level_start(self, game: 'Game') -> None:
-        pass
-    def on_correct(self, game: 'Game') -> None:
-        pass
-    def on_wrong(self, game: 'Game') -> None:
-        pass
-
-class RemapMod(BaseMod):
-    id = "remap"
-    timed_setting_key = "timed_enable_remap"
-
-    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
-        every = int(game.settings.get("remap_every_hits", RULE_EVERY_HITS))
-        L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every))
-
-    def on_mods_applied(self, game: 'Game') -> None:
-        every = int(game.settings.get("timed_remap_every_hits", 6))
-        game.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
-        if not game.rules.current_mapping:
-            game.rules.roll_mapping(SYMS)
-            game._start_mapping_banner(from_pinned=False)
-
-    def on_correct(self, game: 'Game') -> None:
-        if game.rules.on_correct():
-            game.rules.roll_mapping(SYMS)
-            game._start_mapping_banner(from_pinned=True)
-
-class SpinMod(BaseMod):
-    id = "spin"
-    timed_setting_key = "timed_enable_spin"
-
-    def on_level_start(self, game: 'Game') -> None:
-        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-
-    def on_mods_applied(self, game: 'Game') -> None:
-        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-
-    def on_correct(self, game: 'Game') -> None:
-        if game.mode is Mode.SPEEDUP:
-            every = int(game.settings.get("spin_every_hits", 0))
-            if every > 0 and (game.hits_in_level % every == 0):
-                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-        else:  # TIMED
-            every = int(game.settings.get("timed_spin_every_hits", 0))
-            if every > 0 and (game.hits_in_level % every == 0):
-                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
-
-class MemoryMod(BaseMod):
-    id = "memory"
-    timed_setting_key = "timed_enable_memory"
-
-    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
-        L.memory_mode = True
-
-    def on_level_start(self, game: 'Game') -> None:
-        if game.level_cfg.memory_mode:
-            game._memory_start_preview(reset_moves=False, force_unhide=True)
-
-    def on_mods_applied(self, game: 'Game') -> None:
-        game.level_cfg.memory_mode = True
-        game._memory_start_preview(reset_moves=False, force_unhide=True)
-
-class JoystickMod(BaseMod):
-    id = "joystick"
-    timed_setting_key = "timed_enable_joystick"
-
-    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
-        L.control_flip_lr_ud = True
-
-    def apply_runtime_flags(self, game: 'Game') -> None:
-        game.level_cfg.control_flip_lr_ud = True
-        game._recompute_keymap()
-
-class _ModRegistry:
-    def __init__(self) -> None:
-        self._mods: dict[str, BaseMod] = {}
-
-    def register(self, mod: BaseMod) -> None:
-        self._mods[mod.id] = mod
-
-    def get(self, mod_id: str) -> Optional[BaseMod]:
-        return self._mods.get(mod_id)
-
-    def ids(self) -> list[str]:
-        return list(self._mods.keys())
-
-    def items(self) -> list[tuple[str, BaseMod]]:
-        return list(self._mods.items())
-
-MODS = _ModRegistry()
-MODS.register(RemapMod())
-MODS.register(SpinMod())
-MODS.register(MemoryMod())
-MODS.register(JoystickMod())
-
-def modifier_options() -> list[str]:
-    return ["—"] + MODS.ids() + ["random"]
-
-def mods_from_ids(ids: list[str]) -> list[BaseMod]:
-    out: list[BaseMod] = []
-    for mid in ids or []:
-        m = MODS.get(mid)
-        if m:
-            out.append(m)
-    return out
-
-def allowed_mod_ids_from_settings(settings: dict) -> list[str]:
-    out = []
-    for mid, m in MODS.items():
-        key = getattr(m, "timed_setting_key", None)
-        if not key:
-            out.append(mid)
-        elif bool(settings.get(key, True)):
-            out.append(mid)
-    return out
 
 # ========= TUTORIAL =========
 @dataclass
@@ -1019,239 +888,6 @@ class BannerManager:
             return "hold", 1.0
         return "out", ((t - self.in_sec - self.hold_sec) / max(1e-6, self.out_sec))
 
-# ========= FX MANAGER =========
-class EffectsManager:
-    def __init__(self, now_fn, *, glitch_mode: GlitchMode = GlitchMode.BOTH):
-        import random as _rand
-        self._rand = _rand
-        self.now = now_fn
-
-        # flags wynikające z trybu
-        self.screen_glitch = glitch_mode in (GlitchMode.SCREEN, GlitchMode.BOTH)
-        self.text_glitch   = glitch_mode in (GlitchMode.TEXT,   GlitchMode.BOTH)
-
-        # shake
-        self.shake_start = 0.0
-        self.shake_until = 0.0
-
-        # glitch (post)
-        self.glitch_active_until = 0.0
-        self.glitch_start_time = 0.0
-        self.glitch_mag = 1.0
-
-        # text glitch
-        self.text_glitch_active_until = 0.0
-        self.next_text_glitch_at = self.now() + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
-
-        # pulses
-        self._pulses = { 'symbol': (0.0, 0.0), 'streak': (0.0, 0.0), 'banner': (0.0, 0.0), 'score': (0.0, 0.0), 'timer': (0.0, 0.0) }
-        self._ring_pulses: dict[str, tuple[float, float]] = {}
-
-        # exit slide
-        self.exit_active = False
-        self.exit_start = 0.0
-        self.exit_symbol: Optional[str] = None
-        self.exit_duration = EXIT_SLIDE_SEC
-
-    def set_glitch_mode(self, mode: GlitchMode):
-        self.screen_glitch = mode in (GlitchMode.SCREEN, GlitchMode.BOTH)
-        self.text_glitch   = mode in (GlitchMode.TEXT,   GlitchMode.BOTH)
-        if not self.screen_glitch:
-            self.clear_transients()
-
-    def clear_transients(self):
-        self.shake_start = self.shake_until = 0.0
-        self.glitch_active_until = self.glitch_start_time = 0.0
-        self.glitch_mag = 1.0
-        self.text_glitch_active_until = 0.0
-        self._pulses = {k: (0.0, 0.0) for k in self._pulses}
-        self._ring_pulses.clear()
-
-    # -------- triggers --------
-    def trigger_shake(self, duration: float = SHAKE_DURATION):
-        now = self.now()
-        self.shake_start = now
-        self.shake_until = now + max(0.01, duration)
-
-    def trigger_glitch(self, *, mag: float = 1.0, duration: float = GLITCH_DURATION):
-        if not self.screen_glitch:
-            return
-        now = self.now()
-        self.glitch_mag = max(0.0, mag)
-        self.glitch_active_until = now + max(0.01, duration)
-        self.glitch_start_time = now
-        self.trigger_shake()
-        if self._rand.random() < 0.5:
-            self.trigger_text_glitch()
-
-    def trigger_text_glitch(self, duration: float = TEXT_GLITCH_DURATION):
-        if not self.text_glitch:
-            return
-        now = self.now()
-        self.text_glitch_active_until = now + max(0.05, duration)
-        self.next_text_glitch_at = now + self._rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
-
-    def maybe_schedule_text_glitch(self):
-        if not self.text_glitch:
-            return
-        now = self.now()
-        if now >= self.next_text_glitch_at and not self.is_text_glitch_active():
-            self.trigger_text_glitch()
-
-    def is_text_glitch_active(self) -> bool:
-        return self.text_glitch and (self.now() < self.text_glitch_active_until)
-
-    def trigger_pulse(self, kind: str, duration: float | None = None):
-        if kind not in self._pulses:
-            return
-        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get(kind, PULSE_BASE_DURATION))
-        now = self.now()
-        self._pulses[kind] = (now, now + max(1e-3, dur))
-
-    def trigger_pulse_symbol(self): self.trigger_pulse('symbol')
-    def trigger_pulse_streak(self): self.trigger_pulse('streak')
-    def trigger_pulse_banner(self): self.trigger_pulse('banner')
-
-        # --- Ring icon pulse (per pozycja) ---
-    def trigger_pulse_ring(self, key: str, duration: float | None = None):
-        if not key:
-            return
-        dur = float(duration if duration is not None else PULSE_KIND_DURATION.get('streak', PULSE_BASE_DURATION))
-        now = self.now()
-        self._ring_pulses[key] = (now, now + max(1e-3, dur))
-
-    def ring_pulse_scale(self, key: str) -> float:
-        st, en = self._ring_pulses.get(key, (0.0, 0.0))
-        if st <= 0.0 or self.now() >= en:
-            return 1.0
-        dur = max(1e-6, en - st)
-        t = (self.now() - st) / dur
-        # delikatny, czytelny pulse
-        local_max = 1.14  # ~+14% skali
-        return 1.0 + (local_max - 1.0) * math.sin(math.pi * max(0.0, min(1.0, t)))
-
-    # -------- queries / math --------
-    def _pulse_curve01(self, t: float, kind: str) -> float:
-        import math
-        t = max(0.0, min(1.0, t))
-        # skala = baza * mnożnik kind
-        kscale = float(PULSE_KIND_SCALE.get(kind, 1.0))
-        max_scale = float(PULSE_BASE_MAX_SCALE) * kscale
-        return 1.0 + (max_scale - 1.0) * math.sin(math.pi * t)
-
-    def pulse_scale(self, kind: str) -> float:
-        start, until = self._pulses.get(kind, (0.0, 0.0))
-        if start <= 0.0:
-            return 1.0
-        now = self.now()
-        if now >= until:
-            return 1.0
-        dur = max(1e-6, until - start)
-        t = (now - start) / dur
-        return self._pulse_curve01(t, kind)
-    
-    def is_pulse_active(self, kind: str) -> bool:
-        start, until = self._pulses.get(kind, (0.0, 0.0))
-        return start > 0.0 and self.now() < until
-
-    def stop_pulse(self, kind: str):
-        if kind in self._pulses:
-            self._pulses[kind] = (0.0, 0.0)
-
-    def trigger_pulse_score(self): self.trigger_pulse('score')
-
-    def shake_offset(self, screen_w: int) -> tuple[float, float]:
-        import math
-        now = self.now()
-        if now >= self.shake_until: return (0.0, 0.0)
-        sh_t = max(0.0, min(1.0, (now - self.shake_start) / SHAKE_DURATION))
-        env = 1.0 - sh_t
-        amp = screen_w * SHAKE_AMPLITUDE_FACT * env
-        phase = 2.0 * math.pi * SHAKE_FREQ_HZ * (now - self.shake_start)
-        dx = amp * math.sin(phase)
-        dy = 0.5 * amp * math.cos(phase * 0.9)
-        return (dx, dy)
-
-    # -------- post-process glitch --------
-    def apply_postprocess(self, frame: pygame.Surface, w: int, h: int) -> pygame.Surface:
-        if not self.screen_glitch: return frame
-        now = self.now()
-        if now >= self.glitch_active_until: return frame
-
-        dur = max(1e-6, GLITCH_DURATION)
-        t = 1.0 - (self.glitch_active_until - now) / dur
-        vigor = (1 - abs(0.5 - t) * 2)
-        strength = max(0.0, min(1.0, vigor * self.glitch_mag))
-
-        # 1) pixelation
-        pf = GLITCH_PIXEL_FACTOR_MAX * strength
-        out = frame
-        if pf > 0:
-            sw, sh = max(1, int(w * (1 - pf))), max(1, int(h * (1 - pf)))
-            small = pygame.transform.smoothscale(frame, (sw, sh))
-            out = pygame.transform.scale(small, (w, h))
-
-        # 2) RGB split
-        ch_off = int(6 * strength) + self._rand.randint(0, 2)
-        if ch_off:
-            base = out.copy()
-            for (mask, dx, dy) in (
-                ((255, 0, 0, 255), ch_off, 0),
-                ((0, 255, 0, 255), -ch_off, 0),
-                ((0, 0, 255, 255), 0, ch_off),
-            ):
-                chan = base.copy()
-                tint = pygame.Surface((w, h), pygame.SRCALPHA)
-                tint.fill(mask)
-                chan.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-                out.blit(chan, (dx, dy), special_flags=pygame.BLEND_ADD)
-
-        # 3) displaced horizontal bands
-        if self._rand.random() < 0.9:
-            bands = self._rand.randint(2, 4)
-            band_h = max(4, h // (bands * 8))
-            for _ in range(bands):
-                y = self._rand.randint(0, h - band_h)
-                dx = self._rand.randint(-int(w * 0.03 * strength), int(w * 0.03 * strength))
-                slice_rect = pygame.Rect(0, y, w, band_h)
-                slice_surf = out.subsurface(slice_rect).copy()
-                out.blit(slice_surf, (dx, y))
-
-        # 4) colored blocks
-        if self._rand.random() < 0.4 * strength:
-            bw = self._rand.randint(w // 12, w // 4)
-            bh = self._rand.randint(h // 24, h // 8)
-            x = self._rand.randint(0, max(0, w - bw))
-            y = self._rand.randint(0, max(0, h - bh))
-            col = (
-                self._rand.randint(180, 255),
-                self._rand.randint(120, 255),
-                self._rand.randint(120, 255),
-                self._rand.randint(40, 100),
-            )
-            pygame.draw.rect(out, col, (x, y, bw, bh))
-        return out
-
-    def start_exit_slide(self, symbol: str, duration: float = EXIT_SLIDE_SEC):
-        self.exit_symbol = symbol
-        self.exit_duration = max(0.05, float(duration))
-        self.exit_start = self.now()
-        self.exit_active = True
-
-    def is_exit_active(self) -> bool:
-        return self.exit_active and (self.now() - self.exit_start) <= self.exit_duration
-
-    def exit_progress(self) -> float:
-        if not self.exit_active:
-            return 0.0
-        t = (self.now() - self.exit_start) / max(1e-6, self.exit_duration)
-        return max(0.0, min(1.0, t))
-
-    def clear_exit(self):
-        self.exit_active = False
-        self.exit_symbol = None
-        self.exit_start = 0.0
-
 # ========= SYMBOL MODEL =========
 @dataclass(frozen=True)
 class Symbol:
@@ -1527,6 +1163,203 @@ class PausableCountdown:
         self.running = False
         self._t0 = 0.0
 
+# ========= MODES =========
+@dataclass
+class ModeProfile:
+    key: 'Mode'
+    label: str
+    order: int
+    menu_bg_path: str
+    game_bg_path: Optional[str] = None
+    menu_music_path: Optional[str] = None
+    game_music_path: Optional[str] = None
+    crossfade_ms: int = 600
+
+    _bg_cache_key: Optional[tuple[int, int]] = field(default=None, init=False)
+    _bg_scaled: Optional[pygame.Surface] = field(default=None, init=False)
+
+class ModeRegistry:
+    def __init__(self, profiles: list[ModeProfile], *, initial_key: 'Mode'):
+        self.modes = sorted(list(profiles), key=lambda p: p.order)
+        try:
+            self.idx = next(i for i, m in enumerate(self.modes) if m.key == initial_key)
+        except StopIteration:
+            self.idx = 0
+
+    def current(self) -> ModeProfile:
+        return self.modes[self.idx]
+
+    def next_index(self, delta: int) -> Optional[int]:
+        to = self.idx + (1 if delta > 0 else -1)
+        if 0 <= to < len(self.modes):
+            return to
+        return None
+
+    def set_index(self, i: int) -> None:
+        if 0 <= i < len(self.modes):
+            self.idx = i
+
+class MusicController:
+    def __init__(self, *, volume: float = 0.6):
+        self.current_path: Optional[str] = None
+        self.volume = max(0.0, min(1.0, float(volume)))
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+        except Exception:
+            pass
+
+    def set_volume(self, v: float) -> None:
+        self.volume = max(0.0, min(1.0, float(v)))
+        try:
+            if pygame.mixer.get_init():
+                pygame.mixer.music.set_volume(self.volume)
+        except Exception:
+            pass
+
+    def fade_to(self, path: Optional[str], *, ms: int = 600, loop: int = -1) -> None:
+        if not path:
+            return
+        if not os.path.exists(path):
+            return
+        try:
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.fadeout(max(0, int(ms)))
+                except Exception:
+                    pass
+                pygame.mixer.music.load(path)
+                pygame.mixer.music.set_volume(self.volume)
+                pygame.mixer.music.play(loop, fade_ms=max(0, int(ms)))
+                self.current_path = path
+        except Exception:
+            pass
+
+class BaseMod(ABC):
+    id: str = ""
+    timed_setting_key: Optional[str] = None
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        pass
+    def apply_runtime_flags(self, game: 'Game') -> None:
+        pass
+    def on_mods_applied(self, game: 'Game') -> None:
+        pass
+    def on_level_start(self, game: 'Game') -> None:
+        pass
+    def on_correct(self, game: 'Game') -> None:
+        pass
+    def on_wrong(self, game: 'Game') -> None:
+        pass
+
+class RemapMod(BaseMod):
+    id = "remap"
+    timed_setting_key = "timed_enable_remap"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        every = int(game.settings.get("remap_every_hits", RULE_EVERY_HITS))
+        L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every))
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        every = int(game.settings.get("timed_remap_every_hits", 6))
+        game.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
+        if not game.rules.current_mapping:
+            game.rules.roll_mapping(SYMS)
+            game._start_mapping_banner(from_pinned=False)
+
+    def on_correct(self, game: 'Game') -> None:
+        if game.rules.on_correct():
+            game.rules.roll_mapping(SYMS)
+            game._start_mapping_banner(from_pinned=True)
+
+class SpinMod(BaseMod):
+    id = "spin"
+    timed_setting_key = "timed_enable_spin"
+
+    def on_level_start(self, game: 'Game') -> None:
+        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+    def on_correct(self, game: 'Game') -> None:
+        if game.mode is Mode.SPEEDUP:
+            every = int(game.settings.get("spin_every_hits", 0))
+            if every > 0 and (game.hits_in_level % every == 0):
+                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+        else:  # TIMED
+            every = int(game.settings.get("timed_spin_every_hits", 0))
+            if every > 0 and (game.hits_in_level % every == 0):
+                game.start_ring_rotation(dur=0.8, spins=2.0, swap_at=0.5)
+
+class MemoryMod(BaseMod):
+    id = "memory"
+    timed_setting_key = "timed_enable_memory"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        L.memory_mode = True
+
+    def on_level_start(self, game: 'Game') -> None:
+        if game.level_cfg.memory_mode:
+            game._memory_start_preview(reset_moves=False, force_unhide=True)
+
+    def on_mods_applied(self, game: 'Game') -> None:
+        game.level_cfg.memory_mode = True
+        game._memory_start_preview(reset_moves=False, force_unhide=True)
+
+class JoystickMod(BaseMod):
+    id = "joystick"
+    timed_setting_key = "timed_enable_joystick"
+
+    def on_apply_level(self, game: 'Game', L: 'LevelCfg') -> None:
+        L.control_flip_lr_ud = True
+
+    def apply_runtime_flags(self, game: 'Game') -> None:
+        game.level_cfg.control_flip_lr_ud = True
+        game._recompute_keymap()
+
+class _ModRegistry:
+    def __init__(self) -> None:
+        self._mods: dict[str, BaseMod] = {}
+
+    def register(self, mod: BaseMod) -> None:
+        self._mods[mod.id] = mod
+
+    def get(self, mod_id: str) -> Optional[BaseMod]:
+        return self._mods.get(mod_id)
+
+    def ids(self) -> list[str]:
+        return list(self._mods.keys())
+
+    def items(self) -> list[tuple[str, BaseMod]]:
+        return list(self._mods.items())
+
+MODS = _ModRegistry()
+MODS.register(RemapMod())
+MODS.register(SpinMod())
+MODS.register(MemoryMod())
+MODS.register(JoystickMod())
+
+def modifier_options() -> list[str]:
+    return ["—"] + MODS.ids() + ["random"]
+
+def mods_from_ids(ids: list[str]) -> list[BaseMod]:
+    out: list[BaseMod] = []
+    for mid in ids or []:
+        m = MODS.get(mid)
+        if m:
+            out.append(m)
+    return out
+
+def allowed_mod_ids_from_settings(settings: dict) -> list[str]:
+    out = []
+    for mid, m in MODS.items():
+        key = getattr(m, "timed_setting_key", None)
+        if not key:
+            out.append(mid)
+        elif bool(settings.get(key, True)):
+            out.append(mid)
+    return out
+
 # ========= GAME =========
 class Game:
 
@@ -1700,25 +1533,36 @@ class Game:
         self.last_window_size = self.screen.get_size()
 
     def start_game(self) -> None:
+        if self.scene is Scene.MENU:
+            self._ensure_mode_system_ready()
         self.reset_game_state()
-        self._ensure_music()
-        if self.music_ok:
-            pygame.mixer.music.play(-1)
+
+        try:
+            self._ensure_mode_system_ready()
+            prof = self.mode_registry.current()
+            if hasattr(self, "music") and prof.game_music_path:
+                self.music.fade_to(prof.game_music_path, ms=prof.crossfade_ms)
+        except Exception:
+            pass
 
     def end_game(self) -> None:
         self.scene = Scene.OVER
 
         self.final_total = int(self.score + self.best_streak)
-
-        # total = końcowy wynik (score + best_streak)
         self.is_new_best = self.final_total > self.highscore
         if self.is_new_best:
             self.highscore = self.final_total
             CFG["highscore"] = int(self.highscore)
             save_config({"highscore": CFG["highscore"]})
 
-        if self.music_ok:
-            pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
+        try:
+            self._ensure_mode_system_ready()
+            prof = self.mode_registry.current()
+            if hasattr(self, "music") and prof.menu_music_path:
+                self.music.fade_to(prof.menu_music_path, ms=prof.crossfade_ms)
+        except Exception:
+            if self.music_ok:
+                pygame.mixer.music.fadeout(MUSIC_FADEOUT_MS)
 
     # ---- Czas i proste utilsy ----
 
@@ -1758,11 +1602,6 @@ class Game:
 
         self.stop_timer()
         return True
-
-    @staticmethod
-    def _ease_out_cubic(t: float) -> float:
-        t = max(0.0, min(1.0, t))
-        return 1 - (1 - t) ** 3
 
     def _glitch_text(self, text: str) -> str:
         out_chars = []
@@ -1887,6 +1726,18 @@ class Game:
             if not choices:
                 break
             self.timed_active_mods.append(_r.choice(choices))
+
+    def _ease_linear(self, t: float) -> float:
+        return self.fx._ease_linear(t)
+
+    def _ease_in_out(self, t: float) -> float:
+        return self.fx._ease_in_out(t)
+
+    def _ease_out_cubic(self, t: float) -> float:
+        return self.fx._ease_out_cubic(t)
+
+    def _ease_in_cubic(self, t: float) -> float:
+        return self.fx._ease_in_cubic(t)
 
 # ---- Zasoby, layout, UI scale, fonty, tło ----
 
@@ -2013,12 +1864,162 @@ class Game:
         except Exception:
             self.music_ok = False
 
+    def _ensure_mode_system_ready(self) -> None:
+        if hasattr(self, "mode_registry"):
+            return
+
+        images_dir = PKG_DIR / "assets" / "images"
+        music_dir  = PKG_DIR / "assets" / "music"
+
+        speedup = ModeProfile(
+            key=Mode.SPEEDUP,
+            label="SPEED-UP",
+            order=0,
+            menu_bg_path=str(images_dir / "menu_speedup.png"),
+            game_bg_path=str(images_dir / "game_speedup.png"),
+            menu_music_path=str(music_dir / "menu_speedup.ogg"),
+            game_music_path=str(music_dir / "game_speedup.ogg"),
+            crossfade_ms=700,
+        )
+        timed = ModeProfile(
+            key=Mode.TIMED,
+            label="TIMED",
+            order=1,
+            menu_bg_path=str(images_dir / "menu_timed.png"),
+            game_bg_path=str(images_dir / "game_timed.png"),
+            menu_music_path=str(music_dir / "menu_timed.ogg"),
+            game_music_path=str(music_dir / "game_timed.ogg"),
+            crossfade_ms=700,
+        )
+
+        self.mode_registry = ModeRegistry([speedup, timed], initial_key=self.mode)
+
+        vol = float(self.settings.get("music_volume", self.cfg["audio"]["music_volume"]))
+        self.music = getattr(self, "music", MusicController(volume=vol))
+        self.music.set_volume(vol)
+
+        cur = self.mode_registry.current()
+        if cur.menu_music_path:
+            self.music.fade_to(cur.menu_music_path, ms=cur.crossfade_ms)
+
+        self._menu_anim = {
+            "active": False, "from_idx": 0, "to_idx": 0,
+            "t0": 0.0, "dur": 0.35, "dir": +1
+        }
+        self._glitch_before_slide: Optional[str] = None  
+
+    def _menu_get_bg(self, profile: ModeProfile) -> pygame.Surface:
+        w, h = self.w, self.h
+        if profile._bg_scaled is not None and profile._bg_cache_key == (w, h):
+            return profile._bg_scaled
+        raw = IMAGES.load(profile.menu_bg_path) if profile.menu_bg_path else None
+        if not raw:
+            s = pygame.Surface((w, h))
+            s.fill(BG)
+            profile._bg_scaled = s
+            profile._bg_cache_key = (w, h)
+            return s
+        rw, rh = raw.get_size()
+        scale = max(w / rw, h / rh)
+        new_size = (max(1, int(rw * scale)), max(1, int(rh * scale)))
+        scaled = pygame.transform.smoothscale(raw, new_size)
+        x = (scaled.get_width() - w) // 2
+        y = (scaled.get_height() - h) // 2
+        cropped = scaled.subsurface(pygame.Rect(x, y, w, h)).copy()
+        profile._bg_scaled = cropped
+        profile._bg_cache_key = (w, h)
+        return cropped
+
+    def _render_menu_background(self) -> None:
+        self._ensure_mode_system_ready()
+        w, h = self.w, self.h
+        out = pygame.Surface((w, h))
+
+        anim = getattr(self, "_menu_anim", {"active": False})
+        peek_ratio = 0.0 
+        cur = self.mode_registry.current()
+        cur_bg = self._menu_get_bg(cur)
+
+        if anim["active"]:
+            p = max(0.0, min(1.0, (self.now() - anim["t0"]) / max(1e-6, anim["dur"])))
+            pe = self._ease_in_out(p)
+
+            from_p = self.mode_registry.modes[anim["from_idx"]]
+            to_p   = self.mode_registry.modes[anim["to_idx"]]
+            from_bg = self._menu_get_bg(from_p)
+            to_bg   = self._menu_get_bg(to_p)
+
+            dir_ = +1 if anim["dir"] >= 0 else -1
+            offset = round(self.w * pe)
+
+            from_x = -offset * dir_
+            to_x   = from_x + self.w * dir_
+
+            out.blit(from_bg, (from_x, 0))
+            out.blit(to_bg, (to_x, 0))
+        else:
+            out.blit(cur_bg, (0, 0))
+            right_idx = self.mode_registry.next_index(+1)
+            if right_idx is not None:
+                nxt = self.mode_registry.modes[right_idx]
+                nxt_bg = self._menu_get_bg(nxt)
+                peek_w = int(w * peek_ratio)
+                src = pygame.Rect(nxt_bg.get_width() - peek_w, 0, peek_w, h)
+                out.blit(nxt_bg, (w - peek_w, 0), area=src)
+
+        self.bg_img = out
+
+    def _start_menu_mode_transition(self, to_idx: int) -> None:
+        if getattr(self, "_menu_anim", {}).get("active", False):
+            return
+        if not (0 <= to_idx < len(self.mode_registry.modes)):
+            return
+        from_idx = self.mode_registry.idx
+        if to_idx == from_idx:
+            return
+
+        self._menu_anim.update({
+            "active": True,
+            "from_idx": from_idx,
+            "to_idx": to_idx,
+            "t0": self.now(),
+            "dur": 0.3,   
+            "dir": +1 if to_idx > from_idx else -1,
+        })
+
+        to_profile = self.mode_registry.modes[to_idx]
+        if hasattr(self, "music") and to_profile.menu_music_path:
+            self.music.fade_to(to_profile.menu_music_path, ms=to_profile.crossfade_ms)
+
+        self._glitch_before_slide = str(self.settings.get("glitch_mode", "BOTH"))
+        self.fx.set_glitch_mode(GlitchMode.NONE)
+
+    def _update_menu_mode_transition(self) -> None:
+        anim = getattr(self, "_menu_anim", None)
+        if not anim or not anim["active"]:
+            return
+        t = (self.now() - anim["t0"]) / max(1e-6, anim["dur"])
+        if t >= 1.0:
+            self.mode_registry.set_index(anim["to_idx"])
+            new_profile = self.mode_registry.current()
+            self.mode = new_profile.key
+            anim["active"] = False
+
+            gm = self._glitch_before_slide or "BOTH"
+            self._glitch_before_slide = None
+            try:
+                self.fx.set_glitch_mode(GlitchMode(gm))
+            except Exception:
+                self.fx.set_glitch_mode(GlitchMode.BOTH)
+
+        # co klatkę odśwież tło (slajd)
+        self._render_menu_background()
+
 # ---- Okno/tryb wyświetlania & rozmiar ----
 
     def _set_windowed_size(self, width: int, height: int) -> None:
         width, height = self._snap_to_aspect(width, height)
 
-        # jeśli rozmiar po snapie pokrywa się z aktualnym, nic nie rób
         cur_w, cur_h = self.screen.get_size()
         if (cur_w, cur_h) == (width, height):
             return
@@ -2628,18 +2629,19 @@ class Game:
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 pygame.quit(); sys.exit(0)
 
-            # O = otwórz/zamknij Settings z KAŻDEJ sceny
             if event.key == pygame.K_o:
                 self.toggle_settings()
                 return
 
-            # --- scene-specific ---
             if self.scene is Scene.MENU:
+                self._ensure_mode_system_ready()
                 if event.key == pygame.K_RETURN:
                     self.start_game(); return
                 if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                    self.mode = (Mode.TIMED if self.mode is Mode.SPEEDUP else Mode.SPEEDUP)
-                    self.fx.trigger_glitch(mag=0.95)
+                    delta = -1 if event.key == pygame.K_LEFT else +1
+                    to_idx = self.mode_registry.next_index(delta)
+                    if to_idx is not None:
+                        self._start_menu_mode_transition(to_idx)
                     return
 
             elif self.scene is Scene.OVER:
@@ -2659,7 +2661,6 @@ class Game:
                     self.settings_save()
                     return
 
-                # ←/→ – w LIŚCIE: zmiana wartości; w TABELI: edycja aktywnej komórki
                 if event.key in (pygame.K_LEFT, pygame.K_RIGHT):
                     delta = -1 if event.key == pygame.K_LEFT else +1
                     if self.settings_focus_table:
@@ -2672,12 +2673,11 @@ class Game:
                                 if self.level == lid:
                                     self.level_goal = L.hits_required
                         else:
-                            self._set_level_mod_slot(lid, col - 2, delta)  # slot 0..2
+                            self._set_level_mod_slot(lid, col - 2, delta)
                     else:
                         self.settings_adjust(delta)
                     return
 
-                # ↓ – w LIŚCIE: ruch w dół / wejście do tabeli; w TABELI: następna kolumna, potem kolejny wiersz
                 if event.key == pygame.K_DOWN:
                     if self.settings_focus_table:
                         if self.level_table_sel_col < 4:
@@ -2690,7 +2690,7 @@ class Game:
                     else:
                         last_idx = self._last_editable_settings_idx()
                         if self.settings_idx == last_idx:
-                            if self.settings_page == 1:   # SPEED-UP
+                            if self.settings_page == 1:
                                 self.settings_focus_table = True
                                 self.level_table_sel_row = 1
                                 self.level_table_sel_col = 1
@@ -2699,7 +2699,6 @@ class Game:
                             self.settings_move(+1)
                         return
 
-                # ↑ – analogicznie do ↓ (w górę / wyjście z tabeli)
                 if event.key == pygame.K_UP:
                     if self.settings_focus_table:
                         if self.level_table_sel_col > 1:
@@ -2717,12 +2716,10 @@ class Game:
                         return
 
             elif self.scene is Scene.INSTRUCTION:
-                # ENTER/SPACE lub dowolny klawisz kierunkowy = start gry
                 if event.key in (pygame.K_RETURN, pygame.K_SPACE) or event.key in self.key_to_pos:
                     self._enter_gameplay_after_instruction()
                     return
 
-            # --- debouncing + kolejka wejść dla gameplay ---
             self.keys_down.add(event.key)
             name = self.keymap_current.get(event.key)
             if name:
@@ -2824,6 +2821,14 @@ class Game:
         now = self.now()
         self.fx.maybe_schedule_text_glitch()
 
+        if self.scene is Scene.MENU:
+            self._ensure_mode_system_ready()
+            self._update_menu_mode_transition()
+            if not getattr(self, "_menu_anim", {}).get("active", False):
+                self._render_menu_background()
+            _ = iq.pop_all()
+            return
+
         banner_active = self.banner.is_active(now)
         if self._banner_was_active and not banner_active:
             if self.level_cfg.memory_mode and self.memory_preview_armed:
@@ -2834,7 +2839,7 @@ class Game:
         paused = banner_active or (now < self.pause_until)
         if paused:
             _ = iq.pop_all()
-            self.stop_timer()     
+            self.stop_timer()
             return
         else:
             self.start_timer()
@@ -2846,7 +2851,7 @@ class Game:
             and now >= self.pause_until):
             self.new_target()
 
-        # --- PULSE SYMBOLU + TIMERA, gdy minęła połowa czasu na target (SPEEDUP) ---
+        # --- PULSE SYMBOLU + TIMERA (SPEEDUP) ---
         if (self.scene is Scene.GAME and self.mode is Mode.SPEEDUP
             and self.target is not None and self.target_time > 0):
             remaining = self.timer_speed.get()
@@ -2876,14 +2881,13 @@ class Game:
                 return
             self.new_target()
 
-        # MEMORY: ukryj ikony po czasie (jeśli jeszcze są widoczne)
+        # MEMORY: ukryj ikony po czasie
         if self.level_cfg.memory_mode and self.memory_show_icons:
             if self.memory_hide_deadline > 0.0 and now >= self.memory_hide_deadline:
                 self.memory_show_icons = False
 
         self._cleanup_exit_slide_if_ready()
 
-        # wejścia gracza
         for n in iq.pop_all():
             self.handle_input_symbol(n)
 
@@ -4169,7 +4173,6 @@ class Game:
         pygame.display.flip()
 
 # ============================== MAIN LOOP ============================== #
-
 def main():
     os.environ['SDL_VIDEO_WINDOW_POS'] = "0,0"
     pygame.init()

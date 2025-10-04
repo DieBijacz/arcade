@@ -9,8 +9,8 @@
     "fullscreen": false,
     "fps": 60,
     "windowed_size": [
-      446,
-      793
+      770,
+      1369
     ]
   },
   "speedup": {
@@ -65,7 +65,7 @@
   "highscore": 181,
   "levels": {
     "1": {
-      "hits": 40,
+      "hits": 15,
       "color": [
         235,
         235,
@@ -73,7 +73,7 @@
       ],
       "mods": [
         "spin",
-        "random",
+        "—",
         "—",
         "—"
       ]
