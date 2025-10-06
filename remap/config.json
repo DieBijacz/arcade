@@ -14,9 +14,9 @@
     ]
   },
   "speedup": {
-    "target_time_initial": 3.0000000000000204,
-    "target_time_min": 2.0000000000000013,
-    "target_time_step": 3.122502256758253e-17
+    "target_time_initial": 6.100000000000014,
+    "target_time_min": 1.0000000000000004,
+    "target_time_step": -0.049999999999999975
   },
   "timed": {
     "duration": 30.0,
@@ -24,13 +24,13 @@
     "gain": 0.5000000000000001,
     "penalty": 1.0,
     "difficulty": "MEDIUM",
-    "mod_every_hits": 10,
+    "mod_every_hits": 20,
     "allow_remap": true,
     "allow_spin": true,
     "allow_memory": true,
     "allow_joystick": true,
-    "remap_every_hits": 5,
-    "spin_every_hits": 1,
+    "remap_every_hits": 7,
+    "spin_every_hits": 4,
     "memory_hide_sec": 0.5
   },
   "rules": {
@@ -41,7 +41,7 @@
     "spin_rotations_per_level": 5,
     "spin_every_hits": 3
   },
-  "lives": 5,
+  "lives": 9,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
     "music_volume": 6.938893903907228e-17,
@@ -65,21 +65,21 @@
   "highscore": 181,
   "levels": {
     "1": {
-      "hits": 15,
+      "hits": 12,
       "color": [
         235,
         235,
         235
       ],
       "mods": [
-        "spin",
+        "—",
         "—",
         "—",
         "—"
       ]
     },
     "2": {
-      "hits": 15,
+      "hits": 12,
       "color": [
         235,
         235,

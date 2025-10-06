@@ -753,17 +753,14 @@ class TutorialPlayer:
             rect.center = (x, y)
             g.draw_symbol(g.screen, it.symbol, rect)
 
-def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
-    L = g.level_cfg
-    resolved = getattr(L, "_mods_resolved", L.modifiers or [])
+def build_tutorial_from_state(g: 'Game',*,mods: list[str],mapping: Optional[tuple[str, str]] = None,intent: str = "full",) -> Optional['TutorialPlayer']:
+    active = list(mods or [])
 
-    # Aktywne „cechy” poziomu
-    has_remap   = any(s.type is RuleType.MAPPING for s in (L.rules or []))
-    has_rotate = ("spin" in resolved)
-    has_memory  = bool(getattr(L, "memory_mode", False))
-    has_invert  = bool(getattr(L, "control_flip_lr_ud", False))
+    has_remap  = "remap"   in active
+    has_rotate = "spin"    in active
+    has_memory = "memory"  in active or bool(getattr(g.level_cfg, "memory_mode", False))
+    has_invert = "joystick" in active or bool(getattr(g.level_cfg, "control_flip_lr_ud", False))
 
-    # Podpis pod tytułem – złożony z aktywnych cech (np. "Remap + rotate")
     parts = []
     if has_remap:  parts.append("Remap")
     if has_rotate: parts.append("Rotate")
@@ -771,7 +768,6 @@ def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
     if has_invert: parts.append("Controls flipped")
     caption = " + ".join(parts) if parts else "Classic"
 
-    # Helper do losowania symboli
     def SYM(exclude: set[str] = set()) -> str:
         choices = [s for s in SYMS if s not in exclude]
         return random.choice(choices) if choices else random.choice(SYMS)
@@ -780,8 +776,11 @@ def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
     mapping_pair: Optional[tuple[str, str]] = None
 
     if has_remap:
-        a = SYM()
-        b = SYM({a})
+        if mapping:
+            a, b = mapping
+        else:
+            a = SYM()
+            b = SYM({a})
         mapping_pair = (a, b)
         neutral = SYM({a, b})
         items += [
@@ -806,63 +805,19 @@ def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
         caption=caption,
         mapping_pair=mapping_pair,
         show_mapping_banner=bool(mapping_pair),
-        static_banner=True,    
-        sequential=True,
-        seq_gap=0.12,
-    )
-
-def build_tutorial_for_timed(g: 'Game') -> Optional['TutorialPlayer']:
-    settings = g.settings
-    allow_remap   = bool(settings.get("timed_enable_remap",   True))
-    allow_spin    = bool(settings.get("timed_enable_spin",    True))
-    allow_memory  = bool(settings.get("timed_enable_memory",  True))
-    allow_invert  = bool(settings.get("timed_enable_joystick", True))
-
-    parts = []
-    if allow_remap:  parts.append("Remap")
-    if allow_spin:   parts.append("Rotate")
-    if allow_memory: parts.append("Memory")
-    if allow_invert: parts.append("Controls flipped")
-    caption = " + ".join(parts) if parts else "Classic"
-
-    def SYM(exclude: set[str] = set()) -> str:
-        choices = [s for s in SYMS if s not in exclude]
-        return random.choice(choices) if choices else random.choice(SYMS)
-
-    items: list[DemoItem] = []
-    mapping_pair: Optional[tuple[str, str]] = None
-
-    if allow_remap:
-        a = SYM()
-        b = SYM({a})
-        mapping_pair = (a, b)
-        neutral = SYM({a, b})
-        items += [
-            DemoItem(at=0.0, symbol=a,       slide_delay=0.9, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
-            DemoItem(at=0.0, symbol=neutral, slide_delay=0.9, slide_duration=0.60, use_mapping=False, rotate_ring=False),
-            DemoItem(at=0.0, symbol=a,       slide_delay=0.9, slide_duration=0.60, use_mapping=True,  rotate_ring=False),
-        ]
-    else:
-        x = SYM(); y = SYM({x}); z = SYM({x, y})
-        items += [
-            DemoItem(at=0.0, symbol=x, slide_delay=0.9, slide_duration=0.60),
-            DemoItem(at=0.0, symbol=y, slide_delay=0.9, slide_duration=0.60),
-            DemoItem(at=0.0, symbol=z, slide_delay=0.9, slide_duration=0.60),
-        ]
-
-    if allow_spin and len(items) >= 2:
-        items[0].rotate_ring = True
-        items[1].rotate_ring = True
-
-    return TutorialPlayer(
-        g, items,
-        caption=caption,
-        mapping_pair=mapping_pair,
-        show_mapping_banner=bool(mapping_pair),
         static_banner=True,
         sequential=True,
         seq_gap=0.12,
     )
+
+def build_tutorial_for_speed(g: 'Game') -> Optional['TutorialPlayer']:
+    L = g.level_cfg
+    resolved = list(getattr(L, "_mods_resolved", L.modifiers or []))
+    return build_tutorial_from_state(g, mods=resolved, mapping=None, intent="full")
+
+def build_tutorial_for_timed(g: 'Game', *, mods: Optional[list[str]] = None) -> Optional['TutorialPlayer']:
+    active = list(mods if mods is not None else g.timed_active_mods)
+    return build_tutorial_from_state(g, mods=active, mapping=g.rules.current_mapping, intent="full")
 
 # ========= RULE MANAGER =========
 class RuleManager:
@@ -1305,11 +1260,11 @@ class RemapMod(BaseMod):
         L.rules.append(RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every))
 
     def on_mods_applied(self, game: 'Game') -> None:
+        # Instalujemy regułę + zapewniamy parę, ale NIE uruchamiamy banera tutaj.
         every = int(game.settings.get("timed_remap_every_hits", 6))
         game.rules.install([RuleSpec(RuleType.MAPPING, banner_on_level_start=True, periodic_every_hits=every)])
         if not game.rules.current_mapping:
             game.rules.roll_mapping(SYMS)
-            game._start_mapping_banner(from_pinned=False)
 
     def on_correct(self, game: 'Game') -> None:
         if game.rules.on_correct():
@@ -1531,6 +1486,10 @@ class Game:
         self.instruction_until = 0.0
         self.instruction_text = ""
         self.allow_skip_instruction = True
+        self._tutorial_builders = {
+            Mode.SPEEDUP: build_tutorial_for_speed,
+            Mode.TIMED: build_tutorial_for_timed,
+        }
 
         # settings buffer (Settings scene)
         self.settings_page = 0  
@@ -1787,12 +1746,13 @@ class Game:
             self.fx.trigger_glitch(mag=0.55)
 
     def _commit_queued_timed_mods(self) -> None:
-        if not self._pending_timed_mods and self._pending_timed_mods != []:
+        if self._pending_timed_mods is None:
             return
-
-        self.timed_active_mods = list(self._pending_timed_mods or [])
+        self.timed_active_mods = list(self._pending_timed_mods)
         self._pending_timed_mods = None
-        self._timed_apply_active_mods()  
+
+        self._timed_apply_active_mods()
+        self._timed_mods_changed_at = self.now()
 
         if "remap" in self.timed_active_mods and self.rules.current_mapping:
             self._start_mapping_banner(from_pinned=False)
@@ -2563,42 +2523,59 @@ class Game:
         self.symbol_spawn_time = 0.0
         self.pause_until = 0.0
 
-        # TIMED – stan modów
+        # TIMED – czysty stan
         self.timed_active_mods = []
         self.timed_hits_since_roll = 0
 
-        # sterowanie / ring
+        # sterowanie/ring
         self.level_cfg.control_flip_lr_ud = False
         self.level_cfg.memory_mode = False
         self.ring_layout = dict(DEFAULT_RING_LAYOUT)
         self._recompute_keymap()
 
+        # Instrukcja + tutorial (wspólny builder)
+        self.scene = Scene.INSTRUCTION
+        self.instruction_text = str(self.mode.name)
+        self.instruction_until = float('inf')
+        self.banner.active_until = 0.0
+        self.mods_banner.active_until = 0.0
+
         if self.mode is Mode.TIMED:
-            self.scene = Scene.INSTRUCTION
-            self.instruction_text = "TIMED"
-            self.instruction_until = float('inf')
-            self.tutorial = build_tutorial_for_timed(self)
-            self.instruction_intro_t = self.now()
-            self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
+            self._timed_fill_to_slots()      # EASY/MEDIUM/HARD -> liczba slotów
+            self._timed_apply_active_mods()  # instaluje mody/reguły, ale BEZ banera remap (patrz RemapMod.on_mods_applied)
+            self.tutorial = build_tutorial_from_state(self, mods=self.timed_active_mods, mapping=self.rules.current_mapping)
         else:
             self.apply_level(1)
+            return
+
+        self.instruction_intro_t = self.now()
+        self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
     def apply_level(self, lvl: int) -> None:
         self.level_cfg = LEVELS.get(lvl, LEVELS[max(LEVELS.keys())])
         self.level_goal = int(max(1, self.level_cfg.hits_required))
+
+        # Zbuduj stan mechanik z tabelki (rozwiąż randomy itp.)
         self.rules.install([])
         self._apply_modifiers_to_fields(self.level_cfg)
         self.memory_show_icons = True
+
         self.instruction_text = f"LEVEL {lvl}"
         self.instruction_until = float('inf')
         self.scene = Scene.INSTRUCTION
-        self.tutorial = build_tutorial_for_speed(self)
+
+        # Tutorial przez wspólny builder (mapping w instrukcji – przykładowy)
+        resolved = list(getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or []))
+        self.tutorial = build_tutorial_from_state(self, mods=resolved, mapping=None)
+
         self.instruction_intro_t = self.now()
         self.instruction_intro_dur = float(INSTRUCTION_FADE_IN_SEC)
 
-        resolved = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
-        for mod in mods_from_ids(resolved):
+        # Hooki modów „na start poziomu” (spin/memory itp.)
+        resolved_mods = getattr(self.level_cfg, "_mods_resolved", self.level_cfg.modifiers or [])
+        for mod in mods_from_ids(resolved_mods):
             mod.on_level_start(self)
+
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
 
@@ -2637,33 +2614,33 @@ class Game:
     def _enter_gameplay_after_instruction(self) -> None:
         self.scene = Scene.GAME
         self.tutorial = None
+        self.banner.active_until = 0.0
+        self.mods_banner.active_until = 0.0
 
-        # Memory
         if self.level_cfg.memory_mode:
             self.memory_show_icons = True
             self.memory_hide_deadline = 0.0
             self.memory_preview_armed = True
 
-        # Reguły levelu
-        self.rules.install(self.level_cfg.rules)
-
-        # Ewentualny mapping banner na starcie
-        mapping_spec = next((s for s in (self.level_cfg.rules or [])
-                            if s.type is RuleType.MAPPING and s.banner_on_level_start), None)
-        if mapping_spec:
-            self.rules.roll_mapping(SYMS)
-            self._start_mapping_banner(from_pinned=False)
+        if self.mode is Mode.SPEEDUP:
+            self.rules.install(self.level_cfg.rules)
+            mapping_spec = next((s for s in (self.level_cfg.rules or [])
+                                if s.type is RuleType.MAPPING and s.banner_on_level_start), None)
+            if mapping_spec:
+                self.rules.roll_mapping(SYMS)
+                self._start_mapping_banner(from_pinned=False)
+            else:
+                if self.level_cfg.memory_mode and self.memory_preview_armed:
+                    self._memory_start_preview(reset_moves=False, force_unhide=False)
         else:
-            if self.level_cfg.memory_mode and self.memory_preview_armed:
-                self._memory_start_preview(reset_moves=False, force_unhide=False)
+            if "remap" in self.timed_active_mods and self.rules.current_mapping:
+                self._start_mapping_banner(from_pinned=False)
 
-        # --- NOWE: nie spawnuj targetu, jeśli właśnie trwa baner lub spin ---
         if not self.banner.is_active(self.now()) and not self.rot_anim.get("active"):
             self.new_target()
         else:
             self.target = None
-        
-        # uruchom odpowiedni timer
+
         if self.mode is Mode.TIMED:
             self.timer_timed.start(float(self.settings.get("timed_duration", TIMED_DURATION)))
         elif self.mode is Mode.SPEEDUP and self.target:
@@ -2829,7 +2806,7 @@ class Game:
 
             self.hits_in_level += 1
 
-            # TIMED: dodaj czas + roll modów
+            # TIMED: +czas i możliwa zmiana modów
             if self.mode is Mode.TIMED:
                 gain = float(self.settings.get("timed_gain", 1.0))
                 self.timer_timed.set(self.timer_timed.get() + gain)
@@ -2846,7 +2823,7 @@ class Game:
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
 
-            # Wywołaj hooki aktywnych modów
+            # Hooki modów
             if self.mode is Mode.TIMED:
                 for mod in mods_from_ids(self.timed_active_mods):
                     mod.on_correct(self)
@@ -2857,6 +2834,18 @@ class Game:
 
             # Level up?
             if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
+                # <<< NOWE: natychmiast wyczyść wszelkie pauzy/animacje >>>
+                self.pause_until = 0.0
+                self.banner.active_until = 0.0
+                self.mods_banner.active_until = 0.0
+                try:
+                    self.rot_anim["active"] = False
+                    self.rot_anim["swapped"] = True
+                except Exception:
+                    pass
+                self.fx.clear_exit()
+                self.exit_dir_pos = None
+
                 self.level_up()
                 if self.scene is Scene.INSTRUCTION:
                     self.target = None
@@ -2915,7 +2904,6 @@ class Game:
         # === WSPÓLNA PAUZA ===
         paused = self.mods_banner.is_active(now) or banner_active or (now < self.pause_until)
         if paused:
-            _ = iq.pop_all()
             self.stop_timer()
             return
         else:
