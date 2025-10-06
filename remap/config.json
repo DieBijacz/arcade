@@ -11,7 +11,8 @@
     "windowed_size": [
       770,
       1369
-    ]
+    ],
+    "ring_palette": "auto"
   },
   "speedup": {
     "target_time_initial": 6.100000000000014,
@@ -23,28 +24,28 @@
     "rule_bonus": 0.0,
     "gain": 0.5000000000000001,
     "penalty": 1.0,
-    "difficulty": "MEDIUM",
+    "difficulty": "HARD",
     "mod_every_hits": 20,
     "allow_remap": true,
     "allow_spin": true,
     "allow_memory": true,
     "allow_joystick": true,
-    "remap_every_hits": 7,
-    "spin_every_hits": 4,
-    "memory_hide_sec": 0.5
+    "remap_every_hits": 8,
+    "spin_every_hits": 2,
+    "memory_hide_sec": 0.7
   },
   "rules": {
-    "every_hits": 10,
+    "every_hits": 3,
     "banner_sec": 2.0,
     "banner_font_center": 64,
     "banner_font_pinned": 40,
     "spin_rotations_per_level": 5,
     "spin_every_hits": 3
   },
-  "lives": 9,
+  "lives": 3,
   "audio": {
     "music": "C:\\code\\arcade\\remap\\assets\\music.ogg",
-    "music_volume": 6.938893903907228e-17,
+    "music_volume": 0.05000000000000007,
     "sfx_volume": 0.049999999999999906
   },
   "effects": {
@@ -65,29 +66,27 @@
   "highscore": 181,
   "levels": {
     "1": {
-      "hits": 12,
+      "hits": 15,
       "color": [
         235,
         235,
         235
       ],
       "mods": [
-        "—",
-        "—",
+        "remap",
         "—",
         "—"
       ]
     },
     "2": {
-      "hits": 12,
+      "hits": 15,
       "color": [
         235,
         235,
         235
       ],
       "mods": [
-        "—",
-        "—",
+        "spin",
         "—",
         "—"
       ]
@@ -100,8 +99,7 @@
         235
       ],
       "mods": [
-        "—",
-        "—",
+        "random",
         "—",
         "—"
       ]
@@ -114,7 +112,6 @@
         235
       ],
       "mods": [
-        "—",
         "—",
         "—",
         "—"
@@ -130,7 +127,6 @@
       "mods": [
         "—",
         "—",
-        "—",
         "—"
       ]
     },
@@ -144,7 +140,6 @@
       "mods": [
         "—",
         "—",
-        "—",
         "—"
       ]
     },
@@ -156,7 +151,6 @@
         235
       ],
       "mods": [
-        "—",
         "—",
         "—",
         "—"
@@ -205,5 +199,6 @@
       ]
     }
   },
-  "memory_hide_sec": 1.0
+  "memory_hide_sec": 0.7,
+  "levels_active": 4
 }

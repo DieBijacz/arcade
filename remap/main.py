@@ -19,27 +19,44 @@ PKG_DIR = Path(__file__).resolve().parent
 
 # ========= SETTINGS DEFAULTS (single source of truth) =========
 def _settings_defaults_from_cfg() -> list[tuple[str, object]]:
+    disp = CFG.get("display", {}) or {}
+    timed = CFG.get("timed",   {}) or {}
+    audio = CFG.get("audio",   {}) or {}
+    rules = CFG.get("rules",   {}) or {}
+
     return [
-        # BASIC
-        ("glitch_mode", "BOTH"),  # NONE | TEXT | SCREEN | BOTH
-        ("fps", int(CFG.get("display", {}).get("fps", FPS))),
-        ("remap_every_hits", int(CFG.get("rules", {}).get("every_hits", RULE_EVERY_HITS))),
-        ("spin_every_hits", int(CFG.get("rules", {}).get("spin_every_hits", 5))),
-        ("memory_hide_sec", float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
-        # TIMED
-        ("timed_duration", float(CFG.get("timed", {}).get("duration", TIMED_DURATION))),
-        ("timed_gain", float(CFG.get("timed", {}).get("gain", 1.0))),
-        ("timed_penalty", float(CFG.get("timed", {}).get("penalty", 1.0))),
-        ("timed_rule_bonus", float(CFG.get("timed", {}).get("rule_bonus", ADDITIONAL_RULE_TIME))),
-        ("timed_difficulty", str(CFG.get("timed", {}).get("difficulty", "EASY"))),
-        ("timed_remap_every_hits", int(CFG.get("timed", {}).get("remap_every_hits", 6))),
-        ("timed_spin_every_hits", int(CFG.get("timed", {}).get("spin_every_hits", 5))),
-        ("timed_memory_hide_sec", float(CFG.get("timed", {}).get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
-        ("timed_mod_every_hits", int(CFG.get("timed", {}).get("mod_every_hits", 6))),
-        ("timed_enable_remap", bool(CFG.get("timed", {}).get("allow_remap", True))),
-        ("timed_enable_spin", bool(CFG.get("timed", {}).get("allow_spin", True))),
-        ("timed_enable_memory", bool(CFG.get("timed", {}).get("allow_memory", True))),
-        ("timed_enable_joystick", bool(CFG.get("timed", {}).get("allow_joystick", True))),
+        # ===== BASIC / DISPLAY / AUDIO =====
+        ("glitch_mode",       str(CFG.get("effects", {}).get("glitch_mode", "BOTH"))),  # NONE | TEXT | SCREEN | BOTH
+        ("fps",               int(disp.get("fps", FPS))),
+        ("fullscreen",        bool(disp.get("fullscreen", True))),
+        ("ring_palette",      str(disp.get("ring_palette", "auto"))),
+        ("music_volume",      float(audio.get("music_volume", CFG["audio"]["music_volume"]))),
+        ("sfx_volume",        float(audio.get("sfx_volume",   CFG["audio"]["sfx_volume"]))),
+
+        # ===== SPEED-UP =====
+        ("remap_every_hits",  int(rules.get("every_hits", RULE_EVERY_HITS))),
+        ("spin_every_hits",   int(rules.get("spin_every_hits", 5))),
+        ("memory_hide_sec",   float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
+        # (czas na reakcję w SPEED-UP już z CFG["speedup"] w stałych TARGET_TIME_*)
+
+        # ===== TIMED =====
+        ("timed_duration",        float(timed.get("duration", TIMED_DURATION))),
+        ("timed_gain",            float(timed.get("gain", 1.0))),
+        ("timed_penalty",         float(timed.get("penalty", 1.0))),
+        ("timed_rule_bonus",      float(timed.get("rule_bonus", ADDITIONAL_RULE_TIME))),
+        ("timed_difficulty",      str(timed.get("difficulty", "EASY"))),
+        ("timed_remap_every_hits",int(timed.get("remap_every_hits", 6))),
+        ("timed_spin_every_hits", int(timed.get("spin_every_hits", 5))),
+        ("timed_memory_hide_sec", float(timed.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
+        ("timed_mod_every_hits",  int(timed.get("mod_every_hits", 6))),
+        ("timed_enable_remap",    bool(timed.get("allow_remap", True))),
+        ("timed_enable_spin",     bool(timed.get("allow_spin", True))),
+        ("timed_enable_memory",   bool(timed.get("allow_memory", True))),
+        ("timed_enable_joystick", bool(timed.get("allow_joystick", True))),
+
+        # ===== INNE =====
+        # liczba aktywnych poziomów – trzymaj w CFG (domyślnie to, co w kodzie)
+        ("levels_active", int(CFG.get("levels_active", LEVELS_ACTIVE_FOR_NOW))),
     ]
 
 # ========= IMAGE LOADER (cache) =========
@@ -1500,6 +1517,19 @@ class Game:
 
         for k, v in _settings_defaults_from_cfg():
             self.settings.setdefault(k, v)
+        
+        # --- Wczytaj tabelkę leveli + licznik aktywnych poziomów z configu (na starcie) ---
+        try:
+            # zasil LevelCfg danymi z CFG["levels"] (hits + modifiers)
+            apply_levels_from_cfg(CFG)
+        except Exception:
+            pass
+        try:
+            self.levels_active = int(CFG.get("levels_active", self.levels_active))
+            self.level_table_sel_row = max(1, min(self.levels_active, self.level_table_sel_row))
+            self.level_table_sel_col = max(1, min(4, self.level_table_sel_col))
+        except Exception:
+            pass
 
         self.settings_focus_table = False
         self.level_table_sel_row = 1          
@@ -1516,26 +1546,7 @@ class Game:
         self._ensure_music()
 
         # --- SFX ---
-        try:
-            if not pygame.mixer.get_init():
-                pygame.mixer.init()           
-            pygame.mixer.set_num_channels(16) 
-        except Exception:
-            pass
-
-        # --- SFX ---
-        self.sfx = {}
-        try:
-            sfx_dir = PKG_DIR / "assets" / "sfx"
-            self.sfx["point"]  = pygame.mixer.Sound(str(sfx_dir / "sfx_point.wav"))
-            self.sfx["wrong"]  = pygame.mixer.Sound(str(sfx_dir / "sfx_wrong.wav"))
-            self.sfx["glitch"] = pygame.mixer.Sound(str(sfx_dir / "sfx_glitch.wav"))
-
-            sfx_vol = float(self.settings.get("sfx_volume", CFG["audio"]["sfx_volume"]))
-            for s in self.sfx.values():
-                s.set_volume(sfx_vol)
-        except Exception:
-            self.sfx = {}
+        self._preload_audio_assets()
 
         self.last_window_size = self.screen.get_size()
 
@@ -1893,6 +1904,54 @@ class Game:
                 self.music_ok = True
         except Exception:
             self.music_ok = False
+    
+    def _preload_audio_assets(self) -> None:
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            pygame.mixer.set_num_channels(16)
+        except Exception:
+            self.sfx = {}
+            return
+
+        self.sfx = {}
+        sfx_dir = PKG_DIR / "assets" / "sfx"
+
+        sfx_files = {
+            "point":  "sfx_point.wav",
+            "wrong":  "sfx_wrong.wav",
+            "glitch": "sfx_glitch.wav",
+        }
+        for key, fname in sfx_files.items():
+            path = sfx_dir / fname
+            try:
+                if path.exists():
+                    self.sfx[key] = pygame.mixer.Sound(str(path))
+            except Exception:
+                pass
+
+        try:
+            sfx_vol = float(self.settings.get("sfx_volume", CFG["audio"]["sfx_volume"]))
+            for s in self.sfx.values():
+                s.set_volume(sfx_vol)
+        except Exception:
+            pass
+
+        music_dir = PKG_DIR / "assets" / "music"
+        music_paths = [
+            music_dir / "menu_speedup.ogg",
+            music_dir / "game_speedup.ogg",
+            music_dir / "menu_timed.ogg",
+            music_dir / "game_timed.ogg",
+        ]
+
+        try:
+            for mp in music_paths:
+                if mp.exists():
+                    pygame.mixer.music.load(str(mp))
+            pygame.mixer.music.stop()
+        except Exception:
+            pass
 
     def _ensure_mode_system_ready(self) -> None:
         if hasattr(self, "mode_registry"):
@@ -2343,7 +2402,7 @@ class Game:
             "timed_duration": 1.0,  
             "timed_gain": 0.1,      
             "timed_penalty": 0.1,   
-            "memory_hide_sec": 0.5,
+            "memory_hide_sec": 0.1,
             "timed_memory_hide_sec": 0.1,
         }.get(key, 0.0)
 
@@ -2384,8 +2443,14 @@ class Game:
         for k, v in _settings_defaults_from_cfg():
             self.settings.setdefault(k, v)
 
+        # >>> NOWE: wczytaj bieżącą liczbę aktywnych poziomów z CFG
+        try:
+            self.levels_active = int(CFG.get("levels_active", self.levels_active))
+        except Exception:
+            pass
+
         self.settings_idx = 0
-        self.settings_move(0)   
+        self.settings_move(0)    # ustawia poprawnie selection + scroll
 
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.SETTINGS
@@ -2395,6 +2460,7 @@ class Game:
     def settings_save(self) -> None:
         clamp_settings(self.settings)
 
+        # === ZŁÓŻ PAYLOAD ===
         payload = commit_settings(
             self.settings,
             CFG=CFG,
@@ -2404,30 +2470,58 @@ class Game:
             RULE_EVERY_HITS=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
         )
 
-        payload.setdefault("effects", {})["glitch_mode"] = self.settings["glitch_mode"]
-        payload.setdefault("display", {})["fps"] = int(self.settings["fps"])
-        payload.setdefault("rules", {})["every_hits"] = int(self.settings["remap_every_hits"])
-        payload.setdefault("timed", {})
+        # --- EFFECTS / DISPLAY / AUDIO ---
+        payload.setdefault("effects", {})["glitch_mode"] = self.settings.get("glitch_mode", "BOTH")
 
-        payload["rules"]["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
+        disp = payload.setdefault("display", {})
+        disp["fps"]        = int(self.settings.get("fps", FPS))
+        disp["fullscreen"] = bool(self.settings.get("fullscreen", CFG.get("display", {}).get("fullscreen", True)))
+        disp["ring_palette"] = str(self.settings.get("ring_palette", "auto"))
+
+        aud = payload.setdefault("audio", {})
+        aud["music_volume"] = float(self.settings.get("music_volume", CFG["audio"]["music_volume"]))
+        aud["sfx_volume"]   = float(self.settings.get("sfx_volume",   CFG["audio"]["sfx_volume"]))
+
+        # --- RULES (SPEED-UP) ---
+        rules = payload.setdefault("rules", {})
+        rules["every_hits"]      = int(self.settings.get("remap_every_hits", RULE_EVERY_HITS))
+        rules["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
+
         payload["memory_hide_sec"] = float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
-        payload["timed"]["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
-        payload["timed"]["gain"]            = float(self.settings.get("timed_gain",       1.0))
-        payload["timed"]["penalty"]         = float(self.settings.get("timed_penalty",    1.0))
-        payload["timed"]["rule_bonus"]      = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
-        payload["timed"]["difficulty"]      = str(self.settings.get("timed_difficulty",   "EASY"))
-        payload["timed"]["mod_every_hits"]  = int(self.settings.get("timed_mod_every_hits", 6))
-        payload["timed"]["allow_remap"]    = bool(self.settings.get("timed_enable_remap", True))
-        payload["timed"]["allow_spin"]     = bool(self.settings.get("timed_enable_spin", True))
-        payload["timed"]["allow_memory"]   = bool(self.settings.get("timed_enable_memory", True))
-        payload["timed"]["allow_joystick"] = bool(self.settings.get("timed_enable_joystick", True))
-        payload["timed"]["remap_every_hits"] = int(self.settings.get("timed_remap_every_hits", 6))
-        payload["timed"]["spin_every_hits"]  = int(self.settings.get("timed_spin_every_hits", 5))
-        payload["timed"]["memory_hide_sec"]  = float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
+        # --- TIMED ---
+        t = payload.setdefault("timed", {})
+        t["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
+        t["gain"]            = float(self.settings.get("timed_gain",       1.0))
+        t["penalty"]         = float(self.settings.get("timed_penalty",    1.0))
+        t["rule_bonus"]      = float(self.settings.get("timed_rule_bonus", ADDITIONAL_RULE_TIME))
+        t["difficulty"]      = str(self.settings.get("timed_difficulty",   "EASY"))
+        t["mod_every_hits"]  = int(self.settings.get("timed_mod_every_hits", 6))
+        t["allow_remap"]     = bool(self.settings.get("timed_enable_remap", True))
+        t["allow_spin"]      = bool(self.settings.get("timed_enable_spin", True))
+        t["allow_memory"]    = bool(self.settings.get("timed_enable_memory", True))
+        t["allow_joystick"]  = bool(self.settings.get("timed_enable_joystick", True))
+        t["remap_every_hits"]= int(self.settings.get("timed_remap_every_hits", 6))
+        t["spin_every_hits"] = int(self.settings.get("timed_spin_every_hits", 5))
+        t["memory_hide_sec"] = float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
+        # --- LEVELS ACTIVE ---
+        payload["levels_active"] = int(self.levels_active)
+
+        # --- TABELA LEVELI -> CFG["levels"] ---
+        levels_out: dict[str, dict] = {}
+        for lid, L in LEVELS.items():
+            # zachowujemy tylko to, co edytuje użytkownik (punkty + mody)
+            levels_out[str(lid)] = {
+                "hits": int(getattr(L, "hits_required", LEVEL_GOAL_PER_LEVEL)),
+                "mods": list(getattr(L, "modifiers", []))[:3],  # już znormalizowane wcześniej
+            }
+        payload["levels"] = levels_out
+
+        # === ZAPIS ===
         save_config(payload)
 
+        # === MERGE DO CFG (aby bieżąca sesja też widziała zmiany) ===
         def _deep_merge(dst, src):
             for k, v in src.items():
                 if isinstance(v, dict) and isinstance(dst.get(k), dict):
@@ -2436,14 +2530,17 @@ class Game:
                     dst[k] = v
         _deep_merge(CFG, payload)
 
+        # po merge – odtwórz level configi z CFG (w tym tabelkę)
         apply_levels_from_cfg(CFG)
 
+        # muzyka/SFX – natychmiastowe zastosowanie głośności
         if self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings.get("music_volume", CFG["audio"]["music_volume"])))
         for sfx in getattr(self, "sfx", {}).values():
             sfx.set_volume(float(self.settings.get("sfx_volume", CFG["audio"]["sfx_volume"])))
 
-        self._set_display_mode(bool(self.settings.get("fullscreen", CFG["display"]["fullscreen"])))
+        # fullscreen + UI
+        self._set_display_mode(bool(self.settings.get("fullscreen", CFG.get("display", {}).get("fullscreen", True))))
         self._rebuild_fonts()
         self.fx.trigger_glitch(mag=1.0)
         self.scene = Scene.MENU
@@ -2503,6 +2600,11 @@ class Game:
 # ---- # ---- Okno/tryb wyświetlania & rozmiar ---- ----
 
     def reset_game_state(self) -> None:
+        try:
+            self.levels_active = int(CFG.get("levels_active", self.levels_active))
+        except Exception:
+            pass
+
         self.timer_timed.reset()
         self.timer_speed.reset()
 
@@ -2900,6 +3002,14 @@ class Game:
         if getattr(self, "_mods_banner_was_active", False) and not mods_active:
             self._commit_queued_timed_mods()
         self._mods_banner_was_active = mods_active
+
+        if (not banner_active and not mods_active
+            and not self.rot_anim.get("active", False)
+            and self.rot_anim.get("pending") is not None
+            and now >= self.pause_until):
+            q = self.rot_anim.pop("pending", None)
+            if q:
+                self.start_ring_rotation(dur=q["dur"], spins=q["spins"], swap_at=q["swap_at"])
 
         # === WSPÓLNA PAUZA ===
         paused = self.mods_banner.is_active(now) or banner_active or (now < self.pause_until)
@@ -3833,13 +3943,26 @@ class Game:
 
     def start_ring_rotation(self, *, dur: float = 0.8, spins: float = 2.0, swap_at: float = 0.5) -> None:
         now = self.now()
+
+        if self.mods_banner.is_active(now) or self.banner.is_active(now) or now < self.pause_until:
+            self.rot_anim["pending"] = {
+                "dur": float(max(0.15, dur)),
+                "spins": float(spins),
+                "swap_at": float(max(0.05, min(0.95, swap_at))),
+            }
+            return
+
         self.rot_anim.update({
-            "active": True, "t0": now, "dur": float(max(0.15, dur)),
-            "spins": float(spins), "swap_at": float(max(0.05, min(0.95, swap_at))),
-            "swapped": False, "from_layout": dict(self.ring_layout),
+            "active": True,
+            "t0": now,
+            "dur": float(max(0.15, dur)),
+            "spins": float(spins),
+            "swap_at": float(max(0.05, min(0.95, swap_at))),
+            "swapped": False,
+            "from_layout": dict(self.ring_layout),
             "to_layout": self._pick_new_ring_layout(),
         })
-        self.pause_until = max(self.pause_until, now + self.rot_anim["dur"])  
+        self.pause_until = max(self.pause_until, now + self.rot_anim["dur"])
         self.stop_timer()
 
     def _update_ring_rotation_anim(self) -> float:
