@@ -23,10 +23,12 @@ def _settings_defaults_from_cfg() -> list[tuple[str, object]]:
     timed = CFG.get("timed",   {}) or {}
     audio = CFG.get("audio",   {}) or {}
     rules = CFG.get("rules",   {}) or {}
+    effects = CFG.get("effects", {}) or {}
 
     return [
         # ===== BASIC / DISPLAY / AUDIO =====
         ("glitch_mode",       str(CFG.get("effects", {}).get("glitch_mode", "BOTH"))),  # NONE | TEXT | SCREEN | BOTH
+        ("glitch_screen_intensity", float(effects.get("glitch_screen_intensity", 0.65))),  # << NOWE 0..1
         ("fps",               int(disp.get("fps", FPS))),
         ("fullscreen",        bool(disp.get("fullscreen", True))),
         ("ring_palette",      str(disp.get("ring_palette", "auto"))),
@@ -37,7 +39,6 @@ def _settings_defaults_from_cfg() -> list[tuple[str, object]]:
         ("remap_every_hits",  int(rules.get("every_hits", RULE_EVERY_HITS))),
         ("spin_every_hits",   int(rules.get("spin_every_hits", 5))),
         ("memory_hide_sec",   float(CFG.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))),
-        # (czas na reakcję w SPEED-UP już z CFG["speedup"] w stałych TARGET_TIME_*)
 
         # ===== TIMED =====
         ("timed_duration",        float(timed.get("duration", TIMED_DURATION))),
@@ -55,7 +56,6 @@ def _settings_defaults_from_cfg() -> list[tuple[str, object]]:
         ("timed_enable_joystick", bool(timed.get("allow_joystick", True))),
 
         # ===== INNE =====
-        # liczba aktywnych poziomów – trzymaj w CFG (domyślnie to, co w kodzie)
         ("levels_active", int(CFG.get("levels_active", LEVELS_ACTIVE_FOR_NOW))),
     ]
 
@@ -1754,7 +1754,8 @@ class Game:
             self.mods_banner.start(now, from_pinned=False)
             self.pause_until = max(self.pause_until, now + self.mods_banner.total)
             self.stop_timer()
-            self.fx.trigger_glitch(mag=0.55)
+            gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+            self.fx.trigger_glitch(mag=max(0.0, min(1.5, 0.55 * gi)))  
 
     def _commit_queued_timed_mods(self) -> None:
         if self._pending_timed_mods is None:
@@ -2179,11 +2180,11 @@ class Game:
         if self.settings_page == 0:
             # ===== BASIC =====
             items += [
-                # ("— BASIC —", "", None),
                 ("Music volume",  f"{float(self.settings.get('music_volume', CFG['audio']['music_volume'])):.2f}", "music_volume"),
                 ("SFX volume",    f"{float(self.settings.get('sfx_volume',   CFG['audio']['sfx_volume'])):.2f}",   "sfx_volume"),
                 ("Fullscreen",    "ON" if self.settings.get('fullscreen', CFG['display'].get('fullscreen', True)) else "OFF", "fullscreen"),
                 ("Glitch",        self.settings.get('glitch_mode', 'BOTH'), "glitch_mode"),
+                ("Glitch intensity", f"{float(self.settings.get('glitch_screen_intensity', 0.65)):.2f}", "glitch_screen_intensity"),  # << NOWE
                 ("FPS cap",       f"{int(self.settings.get('fps', FPS))}",  "fps"),
                 ("Ring palette",  f"{self.settings.get('ring_palette', 'auto')}", "ring_palette"),
                 ("High score",    f"{self.highscore}", "highscore"),
@@ -2193,7 +2194,6 @@ class Game:
         if self.settings_page == 1:
             # ===== SPEED-UP =====
             items += [
-                # ("— SPEED-UP —", "", None),
                 ("Initial time",  f"{float(self.settings.get('target_time_initial', TARGET_TIME_INITIAL)):.2f}s",   "target_time_initial"),
                 ("Time step",     f"{float(self.settings.get('target_time_step', TARGET_TIME_STEP)):+.2f}s/hit",    "target_time_step"),
                 ("Minimum time",  f"{float(self.settings.get('target_time_min', TARGET_TIME_MIN)):.2f}s",           "target_time_min"),
@@ -2270,7 +2270,7 @@ class Game:
         key = items[self.settings_idx][2]
         if key is None:
             return
-        
+
         if key == "timed_difficulty":
             opts = ["EASY", "MEDIUM", "HARD"]
             cur = self.settings.get("timed_difficulty", "EASY")
@@ -2279,11 +2279,10 @@ class Game:
             self._timed_fill_to_slots()
             self._timed_apply_active_mods()
             return
-    
+
         if key == "timed_remap_every_hits":
             v = int(self.settings.get("timed_remap_every_hits", 6)) + delta
             self.settings["timed_remap_every_hits"] = max(1, min(20, v))
-            # jeśli remap jest aktywny w TIMED – od razu ustaw częstotliwość w RuleManagerze
             if self.mode is Mode.TIMED and "remap" in self.timed_active_mods:
                 self.rules.mapping_every_hits = int(self.settings["timed_remap_every_hits"])
             return
@@ -2293,38 +2292,43 @@ class Game:
             self.settings["timed_spin_every_hits"] = max(1, min(50, v))
             return
 
-
         if key == "timed_mod_every_hits":
             v = int(self.settings.get("timed_mod_every_hits", 6)) + delta
             self.settings["timed_mod_every_hits"] = max(1, min(20, v))
             return
-        
+
         if key in ("timed_enable_remap", "timed_enable_spin", "timed_enable_memory", "timed_enable_joystick"):
             self.settings[key] = not bool(self.settings.get(key, True))
-            # od razu usuń niedozwolone z aktywnych i dopełnij, jeśli trzeba
             self._timed_prune_disallowed()
             self._timed_fill_to_slots()
             self._timed_apply_active_mods()
             return
 
         if key == "settings_page":
-            self.settings_page = (self.settings_page + (1 if delta > 0 else -1)) % 3  
+            self.settings_page = (self.settings_page + (1 if delta > 0 else -1)) % 3
             self.settings_idx = 0
             self.settings_scroll = 0.0
             self.settings_focus_table = False
             self._ensure_selected_visible()
-            self.fx.trigger_glitch(mag=0.95)
+            # << zmieniono: użyj intensywności ekranu >>
+            gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+            self.fx.trigger_glitch(mag=max(0.0, min(1.5, 0.95 * gi)))
             self.fx.trigger_text_glitch()
             return
-        
+
         if key == "glitch_mode":
             opts = ["NONE", "TEXT", "SCREEN", "BOTH"]
             cur = self.settings.get("glitch_mode", "BOTH")
             i = (opts.index(cur) + delta) % len(opts)
             val = opts[i]
             self.settings["glitch_mode"] = val
-            # zastosuj od razu
             self.fx.set_glitch_mode(GlitchMode(val))
+            return
+
+        if key == "glitch_screen_intensity":
+            k = float(self.settings.get("glitch_screen_intensity", 0.65))
+            k = max(0.0, min(1.0, k + 0.05 * (1 if delta > 0 else -1)))
+            self.settings["glitch_screen_intensity"] = k
             return
 
         if key == "fps":
@@ -2355,18 +2359,15 @@ class Game:
             v = int(self.settings.get("spin_every_hits", 5)) + delta
             self.settings["spin_every_hits"] = max(1, min(50, v))
             return
-        
-        # --- per-level edits ---
+
         if key and key.startswith("level") and ("_hits" in key or "_color" in key):
             try:
                 lid = int(key.split("level",1)[1].split("_",1)[0])
                 L = LEVELS.get(lid)
-                if L:
-                    if key.endswith("_hits"):
-                        L.hits_required = max(1, min(999, L.hits_required + delta))
-                        # jeśli edytujesz aktualny level – zaktualizuj bieżący limit
-                        if self.level == lid:
-                            self.level_goal = L.hits_required
+                if L and key.endswith("_hits"):
+                    L.hits_required = max(1, min(999, L.hits_required + delta))
+                    if self.level == lid:
+                        self.level_goal = L.hits_required
                 return
             except Exception:
                 return
@@ -2377,15 +2378,13 @@ class Game:
             CFG["display"]["fullscreen"] = bool(self.settings["fullscreen"])
             save_config({"display": {"fullscreen": CFG["display"]["fullscreen"]}})
             return
-        
+
         if key == "levels_active":
             new_val = int(max(1, min(LEVELS_MAX, int(self.levels_active) + delta)))
-            # dobuduj brakujące LevelCfg przy zwiększaniu
             if new_val > self.levels_active:
                 for lid in range(self.levels_active + 1, new_val + 1):
                     _ensure_level_exists(lid)
             self.levels_active = new_val
-            # korekta kursora w tabeli, jeśli wypadł poza zakres
             if self.level_table_sel_row > self.levels_active:
                 self.level_table_sel_row = self.levels_active
                 self.level_table_sel_col = min(self.level_table_sel_col, 4)
@@ -2399,9 +2398,9 @@ class Game:
             "music_volume": 0.05,
             "sfx_volume": 0.05,
             "timed_rule_bonus": 0.5,
-            "timed_duration": 1.0,  
-            "timed_gain": 0.1,      
-            "timed_penalty": 0.1,   
+            "timed_duration": 1.0,
+            "timed_gain": 0.1,
+            "timed_penalty": 0.1,
             "memory_hide_sec": 0.1,
             "timed_memory_hide_sec": 0.1,
         }.get(key, 0.0)
@@ -2419,18 +2418,15 @@ class Game:
 
         if key == "memory_hide_sec":
             self.settings["memory_hide_sec"] = max(0.5, float(self.settings["memory_hide_sec"]))
-
         if key == "timed_memory_hide_sec":
             self.settings["timed_memory_hide_sec"] = max(0.5, float(self.settings["timed_memory_hide_sec"]))
 
         if key == "music_volume" and self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings["music_volume"]))
-
         elif key == "sfx_volume":
             v = float(self.settings["sfx_volume"])
             for s in getattr(self, "sfx", {}).values():
                 s.set_volume(v)
-            # opcjonalny odsłuch:
             try:
                 if self.sfx.get("point"):
                     self.sfx["point"].play()
@@ -2452,7 +2448,8 @@ class Game:
         self.settings_idx = 0
         self.settings_move(0)    # ustawia poprawnie selection + scroll
 
-        self.fx.trigger_glitch(mag=1.0)
+        gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+        self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))
         self.scene = Scene.SETTINGS
         self.settings_scroll = 0.0
         self._ensure_selected_visible()
@@ -2460,7 +2457,6 @@ class Game:
     def settings_save(self) -> None:
         clamp_settings(self.settings)
 
-        # === ZŁÓŻ PAYLOAD ===
         payload = commit_settings(
             self.settings,
             CFG=CFG,
@@ -2470,8 +2466,10 @@ class Game:
             RULE_EVERY_HITS=int(self.settings.get("remap_every_hits", RULE_EVERY_HITS)),
         )
 
-        # --- EFFECTS / DISPLAY / AUDIO ---
-        payload.setdefault("effects", {})["glitch_mode"] = self.settings.get("glitch_mode", "BOTH")
+        # EFFECTS / DISPLAY / AUDIO
+        effects = payload.setdefault("effects", {})
+        effects["glitch_mode"] = self.settings.get("glitch_mode", "BOTH")
+        effects["glitch_screen_intensity"] = float(self.settings.get("glitch_screen_intensity", 0.65))  # << NOWE
 
         disp = payload.setdefault("display", {})
         disp["fps"]        = int(self.settings.get("fps", FPS))
@@ -2482,14 +2480,14 @@ class Game:
         aud["music_volume"] = float(self.settings.get("music_volume", CFG["audio"]["music_volume"]))
         aud["sfx_volume"]   = float(self.settings.get("sfx_volume",   CFG["audio"]["sfx_volume"]))
 
-        # --- RULES (SPEED-UP) ---
+        # RULES (SPEED-UP)
         rules = payload.setdefault("rules", {})
         rules["every_hits"]      = int(self.settings.get("remap_every_hits", RULE_EVERY_HITS))
         rules["spin_every_hits"] = int(self.settings.get("spin_every_hits", 5))
 
         payload["memory_hide_sec"] = float(self.settings.get("memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
-        # --- TIMED ---
+        # TIMED
         t = payload.setdefault("timed", {})
         t["duration"]        = float(self.settings.get("timed_duration",   TIMED_DURATION))
         t["gain"]            = float(self.settings.get("timed_gain",       1.0))
@@ -2505,23 +2503,19 @@ class Game:
         t["spin_every_hits"] = int(self.settings.get("timed_spin_every_hits", 5))
         t["memory_hide_sec"] = float(self.settings.get("timed_memory_hide_sec", MEMORY_HIDE_AFTER_SEC))
 
-        # --- LEVELS ACTIVE ---
+        # LEVELS ACTIVE + TABELA
         payload["levels_active"] = int(self.levels_active)
-
-        # --- TABELA LEVELI -> CFG["levels"] ---
         levels_out: dict[str, dict] = {}
         for lid, L in LEVELS.items():
-            # zachowujemy tylko to, co edytuje użytkownik (punkty + mody)
             levels_out[str(lid)] = {
                 "hits": int(getattr(L, "hits_required", LEVEL_GOAL_PER_LEVEL)),
-                "mods": list(getattr(L, "modifiers", []))[:3],  # już znormalizowane wcześniej
+                "mods": list(getattr(L, "modifiers", []))[:3],
             }
         payload["levels"] = levels_out
 
-        # === ZAPIS ===
         save_config(payload)
 
-        # === MERGE DO CFG (aby bieżąca sesja też widziała zmiany) ===
+        # MERGE → CFG + odświeżenie leveli
         def _deep_merge(dst, src):
             for k, v in src.items():
                 if isinstance(v, dict) and isinstance(dst.get(k), dict):
@@ -2529,11 +2523,9 @@ class Game:
                 else:
                     dst[k] = v
         _deep_merge(CFG, payload)
-
-        # po merge – odtwórz level configi z CFG (w tym tabelkę)
         apply_levels_from_cfg(CFG)
 
-        # muzyka/SFX – natychmiastowe zastosowanie głośności
+        # natychmiastowe zastosowanie głośności
         if self.music_ok:
             pygame.mixer.music.set_volume(float(self.settings.get("music_volume", CFG["audio"]["music_volume"])))
         for sfx in getattr(self, "sfx", {}).values():
@@ -2542,7 +2534,11 @@ class Game:
         # fullscreen + UI
         self._set_display_mode(bool(self.settings.get("fullscreen", CFG.get("display", {}).get("fullscreen", True))))
         self._rebuild_fonts()
-        self.fx.trigger_glitch(mag=1.0)
+
+        # „potwierdzenie” – użyj intensywności
+        gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+        self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))
+
         self.scene = Scene.MENU
 
     def settings_cancel(self) -> None:
@@ -2895,7 +2891,6 @@ class Game:
                 self.best_streak = self.streak
             self.score += 1
 
-            # pulse + SFX + ring pulse
             self.fx.trigger_pulse('score')
             try:
                 hit_pos = next(p for p, s in self.ring_layout.items() if s == required)
@@ -2908,7 +2903,6 @@ class Game:
 
             self.hits_in_level += 1
 
-            # TIMED: +czas i możliwa zmiana modów
             if self.mode is Mode.TIMED:
                 gain = float(self.settings.get("timed_gain", 1.0))
                 self.timer_timed.set(self.timer_timed.get() + gain)
@@ -2919,13 +2913,11 @@ class Game:
                     self.timed_hits_since_roll = 0
                     self._timed_roll_mod()
 
-            # SPEEDUP: tempo celu
             if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
 
-            # Hooki modów
             if self.mode is Mode.TIMED:
                 for mod in mods_from_ids(self.timed_active_mods):
                     mod.on_correct(self)
@@ -2934,9 +2926,7 @@ class Game:
                 for mod in mods_from_ids(resolved):
                     mod.on_correct(self)
 
-            # Level up?
             if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
-                # <<< NOWE: natychmiast wyczyść wszelkie pauzy/animacje >>>
                 self.pause_until = 0.0
                 self.banner.active_until = 0.0
                 self.mods_banner.active_until = 0.0
@@ -2956,7 +2946,6 @@ class Game:
                     self._lock_inputs()
                     return
 
-            # Spróbuj exit-slide; jeśli nie — nowy target
             if not self._try_start_exit_slide(required):
                 self.new_target()
             return
@@ -2967,7 +2956,9 @@ class Game:
             self.fx.trigger_pulse_banner()
         self.streak = 0
         self.fx.trigger_shake()
-        self.fx.trigger_glitch()
+
+        gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+        self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))  # << zamiast stałego
 
         if self.mode is Mode.TIMED:
             pen = float(self.settings.get("timed_penalty", 1.0))
@@ -3045,13 +3036,14 @@ class Game:
 
         # SPEEDUP: timeout targetu
         if (self.mode is Mode.SPEEDUP
-            and self.scene is Scene.GAME           
+            and self.scene is Scene.GAME
             and self.target is not None
             and self.timer_speed.expired()):
             if self.lives_enabled():
                 self.lives -= 1
             self.streak = 0
-            self.fx.trigger_glitch()
+            gi = float(self.settings.get("glitch_screen_intensity", 0.65))
+            self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))  # << NOWE
             if self.lives <= 0:
                 self.end_game()
                 return

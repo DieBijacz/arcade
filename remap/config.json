@@ -50,7 +50,8 @@
   },
   "effects": {
     "glitch_enabled": true,
-    "glitch_mode": "BOTH"
+    "glitch_mode": "BOTH",
+    "glitch_screen_intensity": 1.0
   },
   "ui": {
     "ring_palette": "auto"
