@@ -539,6 +539,16 @@ class DemoItem:
     rotate_ring: bool = False     # jeśli True – wykonaj losową rotację layoutu ringu tuż PRZED startem itemu (tylko wizualnie)
     tail_sec: float = 0.20        # chwila, aby symbol "doszedł" i zniknął estetycznie
 
+@dataclass
+class FloatingText:
+    text: str
+    start: Tuple[int, int]
+    end: Tuple[int, int]
+    t0: float
+    dur: float
+    color: Tuple[int, int, int]
+    kind: str  # 'gain' | 'penalty'
+
 class TutorialPlayer:
     def __init__(self, game: 'Game', items: list[DemoItem], *,
                  caption: str = "",
@@ -1098,12 +1108,44 @@ class TimeBar:
 
     def draw(self, ratio: float, label: Optional[str] = None) -> None:
         g = self.g
+        now = g.now()
         ratio = max(0.0, min(1.0, ratio))
-        if ratio <= TIMER_BAR_CRIT_TIME:   fill_color = TIMER_BAR_CRIT_COLOR
-        elif ratio <= TIMER_BAR_WARN_TIME: fill_color = TIMER_BAR_WARN_COLOR
-        else:                              fill_color = TIMER_BAR_FILL
 
-        # PULSE WYSOKOŚCI PASKA
+        # statusy „błysków”
+        surge_left  = max(0.0, (getattr(g, "bar_surge_until", 0.0)  - now))
+        flash_left  = max(0.0, (getattr(g, "bar_flash_until", 0.0)  - now))
+        penal_left  = max(0.0, (getattr(g, "bar_penalty_until", 0.0) - now))
+
+        # bazowe kolory wg ratio (zachowujemy istniejącą logikę ostrzeżeń)
+        if ratio <= TIMER_BAR_CRIT_TIME:   base_fill = TIMER_BAR_CRIT_COLOR
+        elif ratio <= TIMER_BAR_WARN_TIME: base_fill = TIMER_BAR_WARN_COLOR
+        else:                              base_fill = TIMER_BAR_FILL
+
+        # penalty → podkręć w stronę czerwieni i lekko „skurcz” wypełnienie
+        shrink_ratio = ratio
+        if penal_left > 0.0:
+            k = max(0.0, min(1.0, penal_left / 0.18))
+            # shrink o ~6% * k
+            shrink_ratio = max(0.0, ratio * (1.0 - 0.06 * k))
+            # tint w stronę czerwieni
+            r = int(base_fill[0] * (1.0 - 0.6 * k) + 220 * (0.6 * k))
+            gcol = int(base_fill[1] * (1.0 - 0.6 * k) +  80 * (0.6 * k))
+            b = int(base_fill[2] * (1.0 - 0.6 * k) +  80 * (0.6 * k))
+            fill_color = (r, gcol, b)
+        else:
+            fill_color = base_fill
+
+        # flash → rozjaśnij (miks z bielą)
+        if flash_left > 0.0:
+            t = max(0.0, min(1.0, flash_left / 0.16))
+            mix = 0.55 * t
+            fill_color = (
+                int(fill_color[0] + (255 - fill_color[0]) * mix),
+                int(fill_color[1] + (255 - fill_color[1]) * mix),
+                int(fill_color[2] + (255 - fill_color[2]) * mix),
+            )
+
+        # wymiar paska
         pulse_scale = g.fx.pulse_scale('timer')
         bar_w = int(g.w * TIMER_BAR_WIDTH_FACTOR)
         base_h = int(TIMER_BAR_HEIGHT)
@@ -1113,10 +1155,17 @@ class TimeBar:
         bar_y = g.h - bottom_margin - bar_h
 
         # tło
-        pygame.draw.rect(g.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)      
+        pygame.draw.rect(g.screen, TIMER_BAR_BG, (bar_x, bar_y, bar_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
 
-        # wypełnienie
-        fill_w = int(bar_w * ratio)
+        # wypełnienie + „surge” – chwilowy overshoot i powrót
+        # overshoot: do +6% długości (nie poza ramkę) z wygaszaniem w 160ms
+        effective_ratio = shrink_ratio
+        if surge_left > 0.0:
+            t = max(0.0, min(1.0, surge_left / 0.16))
+            overshoot = 0.06 * t  # maleje do 0
+            effective_ratio = min(1.0, effective_ratio + overshoot)
+
+        fill_w = int(bar_w * effective_ratio)
         if fill_w > 0:
             pygame.draw.rect(g.screen, fill_color, (bar_x, bar_y, fill_w, bar_h), border_radius=TIMER_BAR_BORDER_RADIUS)
 
@@ -1136,10 +1185,10 @@ class TimeBar:
         # podpis nad paskiem
         if label:
             timer_font = getattr(g, "timer_font", g.mid)
-            t = g.draw_text(label, color=TIMER_BAR_TEXT_COLOR, font=timer_font, shadow=True, glitch=False)
-            tx = bar_x + (bar_w - t.get_width()) // 2
-            ty = bar_y - t.get_height() - TIMER_LABEL_GAP
-            g.screen.blit(t, (tx, ty))
+            t_surf = g.draw_text(label, color=TIMER_BAR_TEXT_COLOR, font=timer_font, shadow=True, glitch=False)
+            tx = bar_x + (bar_w - t_surf.get_width()) // 2
+            ty = bar_y - t_surf.get_height() - TIMER_LABEL_GAP
+            g.screen.blit(t_surf, (tx, ty))
 
 class PausableCountdown:
     def __init__(self, now_fn):
@@ -2880,10 +2929,21 @@ class Game:
                 self.lock_until_all_released = False
 
     def handle_input_symbol(self, name: str) -> None:
+        if not hasattr(self, "floaters"):
+            self.floaters: list[FloatingText] = []
+        if not hasattr(self, "bar_surge_until"):
+            self.bar_surge_until = 0.0
+        if not hasattr(self, "bar_flash_until"):
+            self.bar_flash_until = 0.0
+        if not hasattr(self, "bar_penalty_until"):
+            self.bar_penalty_until = 0.0
+
         if self.scene is not Scene.GAME or not self.target:
             return
 
         required = self.rules.apply(self.target)
+        now = self.now()
+
         if name == required:
             # --- DOBRA ODPOWIEDŹ ---
             self.streak += 1
@@ -2897,27 +2957,74 @@ class Game:
                 self.fx.trigger_pulse_ring(hit_pos)
             except StopIteration:
                 pass
-            if self.sfx.get("point"): self.sfx["point"].play()
+            if self.sfx.get("point"): 
+                self.sfx["point"].play()
             if self.streak and self.streak % 10 == 0:
                 self.fx.trigger_pulse_streak()
 
             self.hits_in_level += 1
 
+            # ====== TIMED: zysk czasu + bonus zależny od szybkości ======
             if self.mode is Mode.TIMED:
-                gain = float(self.settings.get("timed_gain", 1.0))
-                self.timer_timed.set(self.timer_timed.get() + gain)
+                base_gain = float(self.settings.get("timed_gain", 1.0))
+                # bonusy konfigurowalne
+                bonus_window = float(self.settings.get("timed_bonus_window", 3.0))   # max czas, który „liczy się” do bonusu
+                bonus_value  = float(self.settings.get("timed_bonus_value", 1.0))    # pełna premia (dodawana proporcjonalnie)
+                # czas reakcji od pojawienia się symbolu
+                reacted_in = max(0.0, now - float(self.symbol_spawn_time or now))
+                # jeśli zmieścił się w oknie – licz proporcję
+                if bonus_window > 1e-6:
+                    speed_ratio = max(0.0, min(1.0, (bonus_window - reacted_in) / bonus_window))
+                else:
+                    speed_ratio = 0.0
+                speed_bonus = bonus_value * speed_ratio
 
+                total_add = max(0.0, base_gain + speed_bonus)
+                self.timer_timed.set(self.timer_timed.get() + total_add)
+
+                # Floater „+Xs” – start w centrum symbolu, meta nad paskiem czasu
+                # kolor od niebieskiego → zielony w zależności od speed_ratio
+                def _lerp(a,b,t): 
+                    return (int(a[0] + (b[0]-a[0])*t), int(a[1] + (b[1]-a[1])*t), int(a[2] + (b[2]-a[2])*t))
+                color = _lerp((70,150,255), (60,220,120), speed_ratio)
+
+                # pozycje
+                base_size = int(self.w * SYMBOL_BASE_SIZE_FACTOR)
+                cx, cy = int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR)
+                start_pos = (cx, cy)
+
+                # policz aktualną geometrię paska (tak samo jak w TimeBar.draw)
+                bar_w = int(self.w * TIMER_BAR_WIDTH_FACTOR)
+                bottom_margin = int(self.h * TIMER_BOTTOM_MARGIN_FACTOR)
+                bar_h = max(1, int(TIMER_BAR_HEIGHT * self.fx.pulse_scale('timer')))
+                bar_x = (self.w - bar_w) // 2
+                bar_y = self.h - bottom_margin - bar_h
+                end_pos = (bar_x + bar_w // 2, bar_y - self.px(16))  # nad środkiem paska
+
+                label = f"+{total_add:.1f}s" if total_add >= 0.05 else "+0.0s"
+                self.floaters.append(FloatingText(
+                    text=label, start=start_pos, end=end_pos,
+                    t0=now, dur=0.9, color=color, kind="gain"
+                ))
+
+                # krótki „surge” i flash paska
+                self.bar_surge_until = max(self.bar_surge_until, now + 0.16)
+                self.bar_flash_until = max(self.bar_flash_until, now + 0.16)
+
+                # roll modów itp. (jak było)
                 self.timed_hits_since_roll += 1
                 every = int(self.settings.get("timed_mod_every_hits", 6))
                 if self.timed_hits_since_roll >= max(1, every) and not self._mods_chain_active():
                     self.timed_hits_since_roll = 0
                     self._timed_roll_mod()
 
+            # ====== SPEEDUP: korekta target_time (jak było) ======
             if self.mode is Mode.SPEEDUP:
                 step = float(self.settings.get("target_time_step", TARGET_TIME_STEP))
                 tmin = float(self.settings.get("target_time_min", TARGET_TIME_MIN))
                 self.target_time = max(tmin, self.target_time + step)
 
+            # hooki modów
             if self.mode is Mode.TIMED:
                 for mod in mods_from_ids(self.timed_active_mods):
                     mod.on_correct(self)
@@ -2926,6 +3033,7 @@ class Game:
                 for mod in mods_from_ids(resolved):
                     mod.on_correct(self)
 
+            # przejście levelu (SPEEDUP) – jak było
             if self.mode is Mode.SPEEDUP and self.hits_in_level >= self.level_goal:
                 self.pause_until = 0.0
                 self.banner.active_until = 0.0
@@ -2951,23 +3059,42 @@ class Game:
             return
 
         # --- ZŁA ODPOWIEDŹ ---
-        if self.sfx.get("wrong"): self.sfx["wrong"].play()
+        if self.sfx.get("wrong"): 
+            self.sfx["wrong"].play()
         if self.rules.current_mapping and self.target == self.rules.current_mapping[0]:
             self.fx.trigger_pulse_banner()
         self.streak = 0
         self.fx.trigger_shake()
 
         gi = float(self.settings.get("glitch_screen_intensity", 0.65))
-        self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))  # << zamiast stałego
+        self.fx.trigger_glitch(mag=max(0.0, min(1.5, 1.0 * gi)))
 
+        # TIMED: kara czasu + floater „-Xs”
         if self.mode is Mode.TIMED:
             pen = float(self.settings.get("timed_penalty", 1.0))
             self.timer_timed.set(self.timer_timed.get() - pen)
+
+            # floater „-Xs” spada i zanika (start = centrum symbolu)
+            base_size = int(self.w * SYMBOL_BASE_SIZE_FACTOR)
+            cx, cy = int(self.w * 0.5), int(self.h * CENTER_Y_FACTOR)
+            start_pos = (cx, cy)
+            end_pos = (cx, min(self.h - self.px(40), cy + self.px(160)))
+            label = f"-{pen:.1f}s"
+            self.floaters.append(FloatingText(
+                text=label, start=start_pos, end=end_pos,
+                t0=now, dur=0.85, color=(220, 80, 80), kind="penalty"
+            ))
+
+            # krótka „czerwieniąca” kontrakcja paska
+            self.bar_penalty_until = max(self.bar_penalty_until, now + 0.18)
+
             if self.timer_timed.expired():
                 self.end_game()
         else:
+            # SPEEDUP: życie w dół (jak było) + króciutka kara paska dla feedbacku
             if self.lives_enabled():
                 self.lives -= 1
+                self.bar_penalty_until = max(self.bar_penalty_until, now + 0.18)
                 if self.lives <= 0:
                     self.end_game()
 
@@ -4024,6 +4151,15 @@ class Game:
             return  # nie rysuj wersji „spawn” drugi raz
 
     def _draw_gameplay(self):
+        if not hasattr(self, "floaters"):
+            self.floaters = []
+        if not hasattr(self, "bar_surge_until"):
+            self.bar_surge_until = 0.0
+        if not hasattr(self, "bar_flash_until"):
+            self.bar_flash_until = 0.0
+        if not hasattr(self, "bar_penalty_until"):
+            self.bar_penalty_until = 0.0
+
         self._blit_bg()
         self._draw_hud()
 
@@ -4077,6 +4213,58 @@ class Game:
         # przypięty baner reguły, jeśli aktywny mapping i nie trwa animacja banera
         if self.rules.current_mapping and not self.banner.is_active(self.now()):
             self._draw_rule_banner_pinned()
+
+        # >>> NOWE: pływające etykiety
+        self._draw_floaters()
+
+    def _draw_floaters(self) -> None:
+        if not hasattr(self, "floaters"):
+            self.floaters = []
+
+        now = self.now()
+        alive: list[FloatingText] = []
+
+        for ft in self.floaters:
+            p = 0.0 if ft.dur <= 1e-6 else max(0.0, min(1.0, (now - ft.t0) / ft.dur))
+            # easing – miękkie wyjście
+            ease = 1.0 - (1.0 - p) ** 3
+
+            if ft.kind == "gain":
+                # lekki „zawis” przy starcie ( ~150ms w miejscu )
+                hang = 0.15 / max(1e-6, ft.dur)
+                if p < hang:
+                    ease_pos = 0.0
+                else:
+                    ease_pos = (p - hang) / max(1e-6, 1.0 - hang)
+                    ease_pos = 1.0 - (1.0 - ease_pos) ** 3
+                x = int(ft.start[0] + (ft.end[0] - ft.start[0]) * ease_pos)
+                y = int(ft.start[1] + (ft.end[1] - ft.start[1]) * ease_pos)
+                alpha = int(255 * (1.0 - p))
+                scale = 1.0 + 0.10 * (1.0 - ease_pos)  # delikatne opadanie skali
+            else:
+                # penalty: opadaj w dół, szybciej na końcu; lekkie przesunięcie w bok
+                ease_pos = ease * ease
+                x = int(ft.start[0] + (ft.end[0] - ft.start[0]) * ease_pos)
+                y = int(ft.start[1] + (ft.end[1] - ft.start[1]) * ease_pos)
+                alpha = int(255 * (1.0 - p))
+                scale = 1.0
+
+            if p < 1.0:
+                # render
+                surf = self.mid.render(ft.text, True, ft.color)
+                if abs(scale - 1.0) > 1e-3:
+                    sw, sh = surf.get_size()
+                    surf = pygame.transform.smoothscale(surf, (max(1, int(sw * scale)), max(1, int(sh * scale))))
+                # cień
+                shadow = self._shadow_text(surf)
+                shadow.set_alpha(int(alpha * 0.85))
+                surf.set_alpha(alpha)
+
+                self.screen.blit(shadow, (x - shadow.get_width() // 2 + 2, y - shadow.get_height() // 2 + 2))
+                self.screen.blit(surf,   (x - surf.get_width()   // 2,     y - surf.get_height()   // 2))
+                alive.append(ft)
+
+        self.floaters = alive  # recykling listy
 
     def draw(self):
         self.fb.fill((0, 0, 0, 0))

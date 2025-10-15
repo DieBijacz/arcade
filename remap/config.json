@@ -24,7 +24,7 @@
     "rule_bonus": 0.0,
     "gain": 0.5000000000000001,
     "penalty": 1.0,
-    "difficulty": "HARD",
+    "difficulty": "EASY",
     "mod_every_hits": 20,
     "allow_remap": true,
     "allow_spin": true,
