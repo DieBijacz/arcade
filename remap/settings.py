@@ -1,11 +1,11 @@
-# remap/settings.py
+﻿# remap/settings.py
 from __future__ import annotations
 from typing import Any, Dict
 
-# ------------- snapshot (runtime) -------------
+# ------------- Runtime snapshot -------------
 
 def make_runtime_settings(CFG: Dict[str, Any]) -> Dict[str, Any]:
-    """Zbuduj słownik ustawień używany przez UI (snapshot z CFG)."""
+    """Build a runtime settings snapshot consumed by the UI."""
     return {
         "target_time_initial": float(CFG["speedup"]["target_time_initial"]),
         "target_time_step":    float(CFG["speedup"]["target_time_step"]),
@@ -21,10 +21,10 @@ def make_runtime_settings(CFG: Dict[str, Any]) -> Dict[str, Any]:
         "ring_palette":        str(CFG.get("ui", {}).get("ring_palette", "auto")),
     }
 
-# ------------- clamp (na żywo w UI) -------------
+# ------------- Clamp values for the UI -------------
 
 def clamp_settings(s: Dict[str, Any]) -> None:
-    """Zaciska zakresy – spójne z _sanitize_cfg() z remap/config.py."""
+    """Clamp values to the same ranges enforced by remap.config._sanitize_cfg()."""
     s["target_time_initial"] = max(0.2, min(10.0, float(s.get("target_time_initial", 3))))
     s["target_time_min"]     = max(0.1, min(float(s["target_time_initial"]), float(s.get("target_time_min", 0.45))))
     s["target_time_step"]    = max(-1.0, min(1.0, float(s.get("target_time_step", -0.03))))
@@ -34,9 +34,9 @@ def clamp_settings(s: Dict[str, Any]) -> None:
     s["timed_rule_bonus"]    = max(0.0, min(30.0, float(s.get("timed_rule_bonus", 5.0))))
     s["rule_font_center"]    = max(8,  min(200, int(s.get("rule_font_center", 64))))
     s["rule_font_pinned"]    = max(8,  min(200, int(s.get("rule_font_pinned", 40))))
-    # bool/str zostawiamy bez zmian
+    # booleans/strings are taken as-is
 
-# ------------- zapis do config.json  -------------
+# ------------- Persist to config.json -------------
 
 def commit_settings(
     settings: Dict[str, Any],
@@ -48,13 +48,12 @@ def commit_settings(
     RULE_EVERY_HITS: int,
 ) -> Dict[str, Any]:
     """
-    Aktualizuje CFG w pamięci i buduje payload do save_config().
-    Zwraca słownik, który przekazujesz do remap.config.save_config().
+    Update the in-memory CFG and build the payload passed to remap.config.save_config().
     """
     clamp_settings(settings)
     s = settings
 
-    # 1) aktualizacja CFG (runtime)
+    # 1) update the runtime CFG mirror
     CFG["speedup"].update(
         {
             "target_time_initial": float(s["target_time_initial"]),
@@ -73,20 +72,20 @@ def commit_settings(
     CFG["rules"]["banner_font_pinned"] = int(s["rule_font_pinned"])
     CFG.setdefault("ui", {})["ring_palette"] = str(s["ring_palette"])
 
-    # 2) dump leveli (hits + kolor), ale bez narzucania struktury klas
+    # 2) serialise level overrides (hits + colour + modifiers)
     levels_dump: Dict[str, Any] = {}
     for lid, L in LEVELS.items():
         hits = int(getattr(L, "hits_required", 15))
         col  = tuple(getattr(L, "score_color", (235,235,235)))
         mods = list(getattr(L, "modifiers", [])) or []
-        while len(mods) < 4: mods.append("—")
+        while len(mods) < 4: mods.append("-")
         levels_dump[str(lid)] = {
             "hits": hits,
             "color": [int(col[0]), int(col[1]), int(col[2])],
             "mods": [str(m) for m in mods[:4]],
         }
 
-    # 3) payload do pliku (częściowy — merge w save_config)
+    # 3) payload for save_config (partial merge)
     return {
         "speedup": CFG["speedup"],
         "lives": CFG["lives"],
@@ -111,3 +110,6 @@ def commit_settings(
         "highscore": CFG.get("highscore", 0),
         "levels": levels_dump,
     }
+
+
+

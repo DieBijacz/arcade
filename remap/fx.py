@@ -1,25 +1,25 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 from typing import Optional, Dict, Tuple
 import random as _rand
 import pygame
 
-# === Stałe efektów (trzymamy je tutaj, by nie zależeć od main.py) ===
+# === Effect constants (isolated from game.py) ===
 
-# Glitch ekranu
+# Screen glitch
 GLITCH_DURATION = 0.20             # s
-GLITCH_PIXEL_FACTOR_MAX = 0.10     # 0..1 jak mocne “downsample”
+GLITCH_PIXEL_FACTOR_MAX = 0.10     # 0..1 controls the downsample strength
 
-# Glitch tekstu
+# Text glitch
 TEXT_GLITCH_DURATION = 0.5
 TEXT_GLITCH_MIN_GAP = 1.0
 TEXT_GLITCH_MAX_GAP = 5.0
 
-# Shake
+# Screen shake
 SHAKE_DURATION = 0.12
 SHAKE_AMPLITUDE_FACT = 0.012
 SHAKE_FREQ_HZ = 18.0
 
-# Pulse
+# Pulse settings
 PULSE_BASE_DURATION = 0.30
 PULSE_BASE_MAX_SCALE = 1.18
 PULSE_KIND_SCALE = {
@@ -37,7 +37,7 @@ PULSE_KIND_DURATION = {
     "timer":  0.40,
 }
 
-# Exit-slide (czas trwania animacji “wyjazdu” symbolu)
+# Exit-slide animation duration
 EXIT_SLIDE_SEC = 0.12
 
 # Tryb glitch
@@ -56,11 +56,11 @@ class EffectsManager:
             "menu_slide_sec": 0.30,
         }
 
-        # flags wynikające z trybu
+        # mode-dependent flags
         self.screen_glitch = glitch_mode in (GlitchMode.SCREEN, GlitchMode.BOTH)
         self.text_glitch   = glitch_mode in (GlitchMode.TEXT,   GlitchMode.BOTH)
 
-        # shake
+        # Screen shake
         self.shake_start = 0.0
         self.shake_until = 0.0
 
@@ -73,7 +73,7 @@ class EffectsManager:
         self.text_glitch_active_until = 0.0
         self.next_text_glitch_at = self.now() + _rand.uniform(TEXT_GLITCH_MIN_GAP, TEXT_GLITCH_MAX_GAP)
 
-        # pulses
+        # Pulse settingss
         self._pulses: Dict[str, Tuple[float, float]] = {
             'symbol': (0.0, 0.0),
             'streak': (0.0, 0.0),
@@ -217,7 +217,7 @@ class EffectsManager:
         dur = max(1e-6, en - st)
         t = (self.now() - st) / dur
         import math
-        # delikatny “pop”
+        # subtle pop
         local_max = 1.14
         return 1.0 + (local_max - 1.0) * math.sin(math.pi * max(0.0, min(1.0, t)))
 
@@ -270,7 +270,7 @@ class EffectsManager:
         if now >= self.glitch_active_until:
             return frame
 
-        # jak “wzburzony” glitch w czasie (dzwon)
+        # bell-curve envelope for the glitch intensity
         dur = max(1e-6, GLITCH_DURATION)
         t = 1.0 - (self.glitch_active_until - now) / dur
         vigor = (1 - abs(0.5 - t) * 2)
@@ -311,7 +311,7 @@ class EffectsManager:
                 slice_surf = out.subsurface(slice_rect).copy()
                 out.blit(slice_surf, (dx, y))
 
-        # 4) Colored blocks (losowe “artefakty”)
+        # 4) Colored blocks (random artefacts)
         if _rand.random() < 0.4 * strength:
             bw = _rand.randint(w // 12, w // 4)
             bh = _rand.randint(h // 24, h // 8)
@@ -347,3 +347,4 @@ class EffectsManager:
         self.exit_active = False
         self.exit_symbol = None
         self.exit_start = 0.0
+
